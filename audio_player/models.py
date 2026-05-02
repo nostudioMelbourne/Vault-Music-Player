@@ -11,6 +11,7 @@ class Song:
     artist: str = ""
     album: str = ""
     play_count: int = 0
+    bpm: int | None = None
 
     @classmethod
     def from_dict(cls, payload):
@@ -19,6 +20,10 @@ class Song:
             play_count = max(0, int(payload.get("play_count") or 0))
         except (TypeError, ValueError):
             play_count = 0
+        try:
+            bpm = int(payload.get("bpm") or 0) or None
+        except (TypeError, ValueError):
+            bpm = None
 
         return cls(
             id=str(payload.get("id") or uuid4().hex),
@@ -27,6 +32,7 @@ class Song:
             artist=str(payload.get("artist") or ""),
             album=str(payload.get("album") or ""),
             play_count=play_count,
+            bpm=bpm if bpm and bpm > 0 else None,
         )
 
     def to_dict(self):
@@ -37,6 +43,7 @@ class Song:
             "artist": self.artist,
             "album": self.album,
             "play_count": self.play_count,
+            "bpm": self.bpm,
         }
 
 

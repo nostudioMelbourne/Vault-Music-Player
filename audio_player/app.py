@@ -1,20 +1,24 @@
 import subprocess
+import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
+from .bpm import analyze_bpm
 from .config import build_paths
 from .library import LibraryManager
 from .playback import NSSoundBackend
 from .utils import describe_song, format_seconds, sanitize_name
+from .waveform import build_waveform_peaks
 
 
 class AudioPlayerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Volt Music")
+        self.root.title("Vault Music")
         self.root.geometry("1180x760")
-        self.root.minsize(900, 620)
+        self.root.minsize(940, 640)
 
         self.paths = build_paths()
         self.library = LibraryManager(self.paths)
@@ -27,7 +31,13 @@ class AudioPlayerApp:
         self.current_queue_index = None
         self.current_queue_source = "Library"
         self.current_song_id = None
+        self.active_play_source = "library"
+        self.syncing_playback_selection = False
         self.dragging_progress = False
+        self.waveform_peaks = []
+        self.waveform_loading = False
+        self.waveform_job_token = 0
+        self.bpm_analysis_song_ids = set()
         self.resize_job = None
 
         self.album_key_by_item = {}
@@ -52,6 +62,7 @@ class AudioPlayerApp:
         self.status_before_drag = ""
         self.playlist_before_drag = None
         self.initial_pane_layout_applied = False
+        self.tree_resize_job = None
 
         self.build_ui()
         self.configure_interactions()
@@ -72,7 +83,7 @@ class AudioPlayerApp:
         self.header_frame.pack(fill=tk.X, pady=(0, 10))
         self.header_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(self.header_frame, text="Audio Player", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.header_frame, text="Vault Music", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         self.header_subtitle = ttk.Label(
             self.header_frame,
             text="Simple library, album, and playlist management for local files.",
@@ -84,7 +95,7 @@ class AudioPlayerApp:
         self.controls_card.pack(fill=tk.X)
 
         style = ttk.Style()
-        style.configure("Treeview", rowheight=28)
+        style.configure("Treeview", rowheight=26)
 
         self.controls = ttk.Frame(self.controls_card, style="Card.TFrame")
         self.controls.pack(fill=tk.X)
@@ -121,16 +132,20 @@ class AudioPlayerApp:
         self.progress_frame.pack(fill=tk.X, pady=(0, 12))
         self.progress_frame.columnconfigure(0, weight=1)
 
-        self.progress_scale = ttk.Scale(
+        self.waveform_canvas = tk.Canvas(
             self.progress_frame,
-            from_=0,
-            to=100,
-            variable=self.progress_var,
-            command=self.on_progress_drag,
+            height=58,
+            background=self.card_bg,
+            highlightthickness=1,
+            highlightbackground=self.border_color,
+            bd=0,
+            cursor="hand2",
         )
-        self.progress_scale.grid(row=0, column=0, sticky="ew")
-        self.progress_scale.bind("<ButtonPress-1>", self.on_progress_press)
-        self.progress_scale.bind("<ButtonRelease-1>", self.on_progress_release)
+        self.waveform_canvas.grid(row=0, column=0, sticky="ew")
+        self.waveform_canvas.bind("<Configure>", lambda _event: self.draw_waveform())
+        self.waveform_canvas.bind("<ButtonPress-1>", self.on_progress_press)
+        self.waveform_canvas.bind("<B1-Motion>", self.on_progress_drag)
+        self.waveform_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
 
         self.time_label = ttk.Label(
             self.progress_frame,
@@ -150,8 +165,8 @@ class AudioPlayerApp:
         self.build_albums_tab()
         self.build_playlist_sidebar()
 
-        self.content.add(self.notebook, stretch="always")
-        self.content.add(self.playlist_sidebar, stretch="always")
+        self.content.add(self.notebook, minsize=520, stretch="always")
+        self.content.add(self.playlist_sidebar, minsize=320, stretch="always")
 
         self.root.bind("<Configure>", self.on_window_configure)
         self.root.after_idle(self.apply_responsive_layout)
@@ -184,15 +199,15 @@ class AudioPlayerApp:
         style.configure(".", background=self.shell_bg, foreground=self.text_color)
         style.configure("Shell.TFrame", background=self.shell_bg)
         style.configure("Card.TFrame", background=self.card_bg, relief="flat")
-        style.configure("Title.TLabel", background=self.shell_bg, foreground=self.text_color, font=("Helvetica Neue", 20, "bold"))
+        style.configure("Title.TLabel", background=self.shell_bg, foreground=self.text_color, font=("Helvetica Neue", 18, "bold"))
         style.configure("Hint.TLabel", background=self.shell_bg, foreground=self.muted_color, font=("Helvetica Neue", 11))
         style.configure("CardHint.TLabel", background=self.card_bg, foreground=self.muted_color, font=("Helvetica Neue", 11))
         style.configure("Status.TLabel", background=self.shell_bg, foreground=self.muted_color, font=("Helvetica Neue", 11))
         style.configure("Panel.TLabelframe", background=self.shell_bg, borderwidth=1, relief="solid")
         style.configure("Panel.TLabelframe.Label", background=self.shell_bg, foreground=self.text_color, font=("Helvetica Neue", 11, "bold"))
-        style.configure("Action.TButton", padding=(8, 5))
-        style.configure("Action.TMenubutton", padding=(8, 5))
-        style.configure("Treeview", background=self.card_bg, fieldbackground=self.card_bg, bordercolor=self.border_color, rowheight=28)
+        style.configure("Action.TButton", padding=(7, 4))
+        style.configure("Action.TMenubutton", padding=(7, 4))
+        style.configure("Treeview", background=self.card_bg, fieldbackground=self.card_bg, bordercolor=self.border_color, rowheight=26)
         style.configure("Treeview.Heading", background="#f5f7fa", foreground=self.text_color, relief="flat", padding=(8, 7))
         style.map("Treeview", background=[("selected", self.selection_bg)], foreground=[("selected", self.text_color)])
         style.map(
@@ -247,13 +262,39 @@ class AudioPlayerApp:
         self.bind_context_menu(self.playlist_list, self.show_playlist_list_context_menu)
         self.bind_context_menu(self.playlist_tree, self.show_playlist_song_context_menu)
 
+        self.library_tree.bind("<<TreeviewSelect>>", lambda _event: self.set_active_play_source("library"), add="+")
+        self.album_tree.bind("<<TreeviewSelect>>", lambda _event: self.set_active_play_source("album"), add="+")
+        self.album_song_tree.bind("<<TreeviewSelect>>", lambda _event: self.set_active_play_source("album_song"), add="+")
+        self.playlist_list.bind("<<ListboxSelect>>", lambda _event: self.set_active_play_source("playlist"), add="+")
+        self.playlist_tree.bind("<<TreeviewSelect>>", lambda _event: self.set_active_play_source("playlist_song"), add="+")
+
         for widget in (self.library_tree, self.album_tree, self.album_song_tree):
             widget.bind("<ButtonPress-1>", self.on_drag_press, add="+")
             widget.bind("<B1-Motion>", self.on_drag_motion, add="+")
             widget.bind("<ButtonRelease-1>", self.on_drag_release, add="+")
 
+        for widget in (self.library_tree, self.album_tree, self.album_song_tree, self.playlist_tree):
+            widget.bind("<Configure>", self.schedule_tree_column_update, add="+")
+
     def on_filter_change(self, *_args):
         self.refresh_all_views()
+
+    def set_active_play_source(self, source):
+        if self.syncing_playback_selection:
+            return
+
+        self.active_play_source = source
+
+    def schedule_tree_column_update(self, *_args):
+        if self.tree_resize_job is not None:
+            self.root.after_cancel(self.tree_resize_job)
+
+        self.tree_resize_job = self.root.after_idle(self.run_scheduled_tree_column_update)
+
+    def run_scheduled_tree_column_update(self):
+        self.tree_resize_job = None
+        stacked_split_view = str(self.albums_content.cget("orient")) == str(tk.VERTICAL)
+        self.update_tree_columns(stacked_split_view)
 
     def bind_context_menu(self, widget, handler):
         for sequence in ("<Button-2>", "<Button-3>", "<Control-Button-1>"):
@@ -278,15 +319,17 @@ class AudioPlayerApp:
         self.songs_filter_frame.columnconfigure(1, weight=1)
         self.songs_filter_frame.columnconfigure(4, weight=1)
 
-        ttk.Label(self.songs_filter_frame, text="Search", style="Hint.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.song_search_label = ttk.Label(self.songs_filter_frame, text="Search", style="Hint.TLabel")
+        self.song_search_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.song_search_entry = ttk.Entry(self.songs_filter_frame, textvariable=self.song_search_var)
         self.song_search_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(
+        self.song_clear_button = ttk.Button(
             self.songs_filter_frame,
             text="Clear",
             command=lambda: self.song_search_var.set(""),
             style="Action.TButton",
-        ).grid(
+        )
+        self.song_clear_button.grid(
             row=0,
             column=2,
             padx=(8, 12),
@@ -347,13 +390,14 @@ class AudioPlayerApp:
 
         self.library_tree = ttk.Treeview(
             songs_tree_frame,
-            columns=("title", "artist", "album", "plays", "filename"),
+            columns=("title", "artist", "album", "bpm", "plays", "filename"),
             show="headings",
             selectmode="extended",
         )
         self.library_tree.heading("title", text="Title")
         self.library_tree.heading("artist", text="Artist")
         self.library_tree.heading("album", text="Album")
+        self.library_tree.heading("bpm", text="BPM")
         self.library_tree.heading("plays", text="Plays")
         self.library_tree.heading("filename", text="File")
         self.library_tree.grid(row=0, column=0, sticky="nsew")
@@ -361,7 +405,9 @@ class AudioPlayerApp:
 
         library_scrollbar = ttk.Scrollbar(songs_tree_frame, orient=tk.VERTICAL, command=self.library_tree.yview)
         library_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.library_tree.configure(yscrollcommand=library_scrollbar.set)
+        library_x_scrollbar = ttk.Scrollbar(songs_tree_frame, orient=tk.HORIZONTAL, command=self.library_tree.xview)
+        library_x_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.library_tree.configure(yscrollcommand=library_scrollbar.set, xscrollcommand=library_x_scrollbar.set)
 
     def build_albums_tab(self):
         self.albums_tab = ttk.Frame(self.notebook, padding=10, style="Shell.TFrame")
@@ -389,15 +435,17 @@ class AudioPlayerApp:
         self.album_filter_frame.columnconfigure(1, weight=1)
         self.album_filter_frame.columnconfigure(3, weight=1)
 
-        ttk.Label(self.album_filter_frame, text="Search", style="Hint.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.album_search_label = ttk.Label(self.album_filter_frame, text="Search", style="Hint.TLabel")
+        self.album_search_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.album_search_entry = ttk.Entry(self.album_filter_frame, textvariable=self.album_search_var)
         self.album_search_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(
+        self.album_clear_button = ttk.Button(
             self.album_filter_frame,
             text="Clear",
             command=lambda: self.album_search_var.set(""),
             style="Action.TButton",
-        ).grid(
+        )
+        self.album_clear_button.grid(
             row=0,
             column=2,
             padx=(8, 12),
@@ -439,7 +487,9 @@ class AudioPlayerApp:
 
         album_scrollbar = ttk.Scrollbar(album_tree_frame, orient=tk.VERTICAL, command=self.album_tree.yview)
         album_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.album_tree.configure(yscrollcommand=album_scrollbar.set)
+        album_x_scrollbar = ttk.Scrollbar(album_tree_frame, orient=tk.HORIZONTAL, command=self.album_tree.xview)
+        album_x_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.album_tree.configure(yscrollcommand=album_scrollbar.set, xscrollcommand=album_x_scrollbar.set)
 
         self.album_song_frame = ttk.LabelFrame(self.albums_content, text="Album Songs", padding=10, style="Panel.TLabelframe")
         self.album_song_frame.columnconfigure(0, weight=1)
@@ -450,15 +500,17 @@ class AudioPlayerApp:
         self.album_song_filter_frame.columnconfigure(1, weight=1)
         self.album_song_filter_frame.columnconfigure(3, weight=1)
 
-        ttk.Label(self.album_song_filter_frame, text="Filter Tracks", style="Hint.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.album_song_search_label = ttk.Label(self.album_song_filter_frame, text="Filter Tracks", style="Hint.TLabel")
+        self.album_song_search_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.album_song_search_entry = ttk.Entry(self.album_song_filter_frame, textvariable=self.album_song_search_var)
         self.album_song_search_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(
+        self.album_song_clear_button = ttk.Button(
             self.album_song_filter_frame,
             text="Clear",
             command=lambda: self.album_song_search_var.set(""),
             style="Action.TButton",
-        ).grid(row=0, column=2, padx=(8, 12))
+        )
+        self.album_song_clear_button.grid(row=0, column=2, padx=(8, 12))
 
         self.album_song_buttons_frame = ttk.Frame(self.album_song_filter_frame, style="Shell.TFrame")
         self.album_song_buttons_frame.grid(row=0, column=3, sticky="e")
@@ -494,12 +546,13 @@ class AudioPlayerApp:
 
         self.album_song_tree = ttk.Treeview(
             album_song_tree_frame,
-            columns=("title", "artist", "plays", "filename"),
+            columns=("title", "artist", "bpm", "plays", "filename"),
             show="headings",
             selectmode="extended",
         )
         self.album_song_tree.heading("title", text="Title")
         self.album_song_tree.heading("artist", text="Artist")
+        self.album_song_tree.heading("bpm", text="BPM")
         self.album_song_tree.heading("plays", text="Plays")
         self.album_song_tree.heading("filename", text="File")
         self.album_song_tree.grid(row=0, column=0, sticky="nsew")
@@ -511,10 +564,16 @@ class AudioPlayerApp:
             command=self.album_song_tree.yview,
         )
         album_song_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.album_song_tree.configure(yscrollcommand=album_song_scrollbar.set)
+        album_song_x_scrollbar = ttk.Scrollbar(
+            album_song_tree_frame,
+            orient=tk.HORIZONTAL,
+            command=self.album_song_tree.xview,
+        )
+        album_song_x_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.album_song_tree.configure(yscrollcommand=album_song_scrollbar.set, xscrollcommand=album_song_x_scrollbar.set)
 
-        self.albums_content.add(self.album_list_frame, stretch="always")
-        self.albums_content.add(self.album_song_frame, stretch="always")
+        self.albums_content.add(self.album_list_frame, minsize=300, stretch="always")
+        self.albums_content.add(self.album_song_frame, minsize=360, stretch="always")
 
     def build_playlist_sidebar(self):
         self.playlist_sidebar = ttk.Frame(self.content, style="Shell.TFrame")
@@ -541,15 +600,17 @@ class AudioPlayerApp:
         self.playlist_filter_frame.columnconfigure(1, weight=1)
         self.playlist_filter_frame.columnconfigure(3, weight=1)
 
-        ttk.Label(self.playlist_filter_frame, text="Search", style="Hint.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.playlist_search_label = ttk.Label(self.playlist_filter_frame, text="Search", style="Hint.TLabel")
+        self.playlist_search_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.playlist_search_entry = ttk.Entry(self.playlist_filter_frame, textvariable=self.playlist_search_var)
         self.playlist_search_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(
+        self.playlist_clear_button = ttk.Button(
             self.playlist_filter_frame,
             text="Clear",
             command=lambda: self.playlist_search_var.set(""),
             style="Action.TButton",
-        ).grid(row=0, column=2, padx=(8, 12))
+        )
+        self.playlist_clear_button.grid(row=0, column=2, padx=(8, 12))
 
         self.playlist_buttons_frame = ttk.Frame(self.playlist_filter_frame, style="Shell.TFrame")
         self.playlist_buttons_frame.grid(row=0, column=3, sticky="e")
@@ -600,18 +661,20 @@ class AudioPlayerApp:
         self.playlist_song_filter_frame.columnconfigure(1, weight=1)
         self.playlist_song_filter_frame.columnconfigure(3, weight=1)
 
-        ttk.Label(self.playlist_song_filter_frame, text="Filter Tracks", style="Hint.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.playlist_song_search_label = ttk.Label(self.playlist_song_filter_frame, text="Filter Tracks", style="Hint.TLabel")
+        self.playlist_song_search_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.playlist_song_search_entry = ttk.Entry(
             self.playlist_song_filter_frame,
             textvariable=self.playlist_song_search_var,
         )
         self.playlist_song_search_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(
+        self.playlist_song_clear_button = ttk.Button(
             self.playlist_song_filter_frame,
             text="Clear",
             command=lambda: self.playlist_song_search_var.set(""),
             style="Action.TButton",
-        ).grid(row=0, column=2, padx=(8, 12))
+        )
+        self.playlist_song_clear_button.grid(row=0, column=2, padx=(8, 12))
 
         self.playlist_song_buttons_frame = ttk.Frame(self.playlist_song_filter_frame, style="Shell.TFrame")
         self.playlist_song_buttons_frame.grid(row=0, column=3, sticky="e")
@@ -632,13 +695,14 @@ class AudioPlayerApp:
 
         self.playlist_tree = ttk.Treeview(
             playlist_song_tree_frame,
-            columns=("title", "artist", "album", "plays"),
+            columns=("title", "artist", "album", "bpm", "plays"),
             show="headings",
             selectmode="browse",
         )
         self.playlist_tree.heading("title", text="Title")
         self.playlist_tree.heading("artist", text="Artist")
         self.playlist_tree.heading("album", text="Album")
+        self.playlist_tree.heading("bpm", text="BPM")
         self.playlist_tree.heading("plays", text="Plays")
         self.playlist_tree.grid(row=0, column=0, sticky="nsew")
         self.playlist_tree.bind("<Double-1>", lambda _event: self.play_selected_playlist_song())
@@ -649,10 +713,16 @@ class AudioPlayerApp:
             command=self.playlist_tree.yview,
         )
         playlist_song_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.playlist_tree.configure(yscrollcommand=playlist_song_scrollbar.set)
+        playlist_song_x_scrollbar = ttk.Scrollbar(
+            playlist_song_tree_frame,
+            orient=tk.HORIZONTAL,
+            command=self.playlist_tree.xview,
+        )
+        playlist_song_x_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.playlist_tree.configure(yscrollcommand=playlist_song_scrollbar.set, xscrollcommand=playlist_song_x_scrollbar.set)
 
-        self.playlist_pane.add(self.playlist_list_frame, stretch="always")
-        self.playlist_pane.add(self.playlist_song_frame, stretch="always")
+        self.playlist_pane.add(self.playlist_list_frame, minsize=110, stretch="always")
+        self.playlist_pane.add(self.playlist_song_frame, minsize=130, stretch="always")
 
 
     def create_panedwindow(self, parent, orient):
@@ -671,6 +741,11 @@ class AudioPlayerApp:
 
         for button in buttons:
             button.grid_forget()
+            try:
+                label_width = max(8, min(14, len(str(button.cget("text"))) + 2))
+                button.configure(width=label_width)
+            except tk.TclError:
+                pass
 
         for index in range(len(buttons)):
             frame.grid_columnconfigure(index, weight=0)
@@ -690,17 +765,62 @@ class AudioPlayerApp:
             for column in range(columns):
                 frame.grid_columnconfigure(column, weight=1)
 
+    def reflow_filter_search(self, label, entry, clear_button, compact):
+        if compact:
+            label.grid_remove()
+            entry.grid_configure(column=0, columnspan=2, sticky="ew")
+            clear_button.grid_configure(column=2, padx=(8, 0))
+        else:
+            label.grid()
+            entry.grid_configure(column=1, columnspan=1, sticky="ew")
+            clear_button.grid_configure(column=2, padx=(8, 12))
+
     def reflow_filter_actions(self, filter_frame, buttons_frame, stacked, button_column, column_span):
         if stacked:
-            buttons_frame.grid_configure(row=1, column=0, columnspan=column_span, sticky="w", pady=(8, 0))
+            buttons_frame.grid_configure(row=1, column=0, columnspan=column_span, sticky="ew", pady=(8, 0))
         else:
             buttons_frame.grid_configure(row=0, column=button_column, columnspan=1, sticky="e", pady=0)
+
+        for column in range(column_span):
+            filter_frame.grid_columnconfigure(column, weight=0)
+
+        filter_frame.grid_columnconfigure(1, weight=1)
+        if stacked:
+            filter_frame.grid_columnconfigure(0, weight=1)
 
     def set_grid_visibility(self, widget, visible):
         if visible:
             widget.grid()
         else:
             widget.grid_remove()
+
+    def widget_width(self, widget, fallback):
+        width = widget.winfo_width()
+        return width if width > 1 else fallback
+
+    def paneconfigure_safe(self, panedwindow, child, **options):
+        try:
+            panedwindow.paneconfigure(child, **options)
+        except tk.TclError:
+            pass
+
+    def configure_pane_limits(self, content_stacked, albums_stacked):
+        if content_stacked:
+            self.paneconfigure_safe(self.content, self.notebook, minsize=230)
+            self.paneconfigure_safe(self.content, self.playlist_sidebar, minsize=170)
+        else:
+            self.paneconfigure_safe(self.content, self.notebook, minsize=520)
+            self.paneconfigure_safe(self.content, self.playlist_sidebar, minsize=320)
+
+        if albums_stacked:
+            self.paneconfigure_safe(self.albums_content, self.album_list_frame, minsize=150)
+            self.paneconfigure_safe(self.albums_content, self.album_song_frame, minsize=180)
+        else:
+            self.paneconfigure_safe(self.albums_content, self.album_list_frame, minsize=300)
+            self.paneconfigure_safe(self.albums_content, self.album_song_frame, minsize=360)
+
+        self.paneconfigure_safe(self.playlist_pane, self.playlist_list_frame, minsize=110)
+        self.paneconfigure_safe(self.playlist_pane, self.playlist_song_frame, minsize=130)
 
     def set_sash_position(self, panedwindow, index, position):
         try:
@@ -753,13 +873,32 @@ class AudioPlayerApp:
 
         compact_controls = width < 1180
         narrow_controls = width < 920
-        stacked_main_content = width < 1080 and height >= 680
-        stacked_split_view = width < 980 and height >= 620
-        stacked_song_actions = width < 1240
-        stacked_panel_actions = width < 980
+        stacked_main_content = width < 1100 and height >= 720
+        stacked_split_view = width < 1040
         compact_chrome = width < 980 or height < 660
         hidden_hints = width < 1120 or height < 700
         hidden_summary = width < 1160 or height < 660
+
+        next_album_orient = tk.VERTICAL if stacked_split_view else tk.HORIZONTAL
+        next_content_orient = tk.VERTICAL if stacked_main_content else tk.HORIZONTAL
+        content_stacked = next_content_orient == tk.VERTICAL
+        albums_stacked = next_album_orient == tk.VERTICAL
+        available_width = max(width - (20 if compact_chrome else 28), 320)
+        main_width = available_width if content_stacked else self.widget_width(self.notebook, int(available_width * 0.57))
+        sidebar_width = available_width if content_stacked else self.widget_width(self.playlist_sidebar, int(available_width * 0.38))
+        album_list_width = available_width if albums_stacked else self.widget_width(self.album_list_frame, int(main_width * 0.38))
+        album_song_width = available_width if albums_stacked else self.widget_width(self.album_song_frame, int(main_width * 0.56))
+        song_filter_width = self.widget_width(self.songs_filter_frame, main_width)
+        album_filter_width = self.widget_width(self.album_filter_frame, album_list_width)
+        album_song_filter_width = self.widget_width(self.album_song_filter_frame, album_song_width)
+        playlist_filter_width = self.widget_width(self.playlist_filter_frame, sidebar_width)
+        playlist_song_filter_width = self.widget_width(self.playlist_song_filter_frame, sidebar_width)
+
+        stacked_song_actions = song_filter_width < 900
+        stacked_album_actions = album_filter_width < 620
+        stacked_album_song_actions = album_song_filter_width < 660
+        stacked_playlist_actions = playlist_filter_width < 560
+        stacked_playlist_song_actions = playlist_song_filter_width < 520
 
         self.container.configure(padding=10 if compact_chrome else 14)
         self.controls_card.configure(padding=8 if compact_chrome else 12)
@@ -779,34 +918,55 @@ class AudioPlayerApp:
         self.layout_button_group(
             self.song_buttons_frame,
             self.song_action_buttons,
-            5 if width >= 1380 else 4 if width >= 1120 else 3 if width >= 900 else 2,
-            fill=stacked_song_actions and width < 900,
+            4 if song_filter_width >= 860 else 3 if song_filter_width >= 640 else 2,
+            fill=stacked_song_actions and song_filter_width < 720,
         )
-        self.layout_button_group(self.album_buttons_frame, self.album_action_buttons, 3 if width >= 1180 else 2 if width >= 900 else 1)
+        self.layout_button_group(
+            self.album_buttons_frame,
+            self.album_action_buttons,
+            3 if album_filter_width >= 720 else 2 if album_filter_width >= 520 else 1,
+            fill=stacked_album_actions and album_filter_width < 540,
+        )
         self.layout_button_group(
             self.album_song_buttons_frame,
             self.album_song_action_buttons,
-            3 if width >= 1180 else 2 if width >= 900 else 1,
-            fill=stacked_panel_actions and width < 900,
+            3 if album_song_filter_width >= 720 else 2 if album_song_filter_width >= 520 else 1,
+            fill=stacked_album_song_actions and album_song_filter_width < 540,
         )
         self.layout_button_group(
             self.playlist_buttons_frame,
             self.playlist_action_buttons,
-            2 if width >= 920 else 1,
-            fill=stacked_panel_actions,
+            2 if playlist_filter_width >= 440 else 1,
+            fill=stacked_playlist_actions,
         )
         self.layout_button_group(
             self.playlist_song_buttons_frame,
             self.playlist_song_action_buttons,
-            2 if width >= 920 else 1,
-            fill=stacked_panel_actions,
+            2 if playlist_song_filter_width >= 420 else 1,
+            fill=stacked_playlist_song_actions,
+        )
+
+        self.reflow_filter_search(self.song_search_label, self.song_search_entry, self.song_clear_button, song_filter_width < 560)
+        self.reflow_filter_search(self.album_search_label, self.album_search_entry, self.album_clear_button, album_filter_width < 480)
+        self.reflow_filter_search(
+            self.album_song_search_label,
+            self.album_song_search_entry,
+            self.album_song_clear_button,
+            album_song_filter_width < 500,
+        )
+        self.reflow_filter_search(self.playlist_search_label, self.playlist_search_entry, self.playlist_clear_button, playlist_filter_width < 430)
+        self.reflow_filter_search(
+            self.playlist_song_search_label,
+            self.playlist_song_search_entry,
+            self.playlist_song_clear_button,
+            playlist_song_filter_width < 430,
         )
 
         self.reflow_filter_actions(self.songs_filter_frame, self.song_buttons_frame, stacked_song_actions, 4, 5)
-        self.reflow_filter_actions(self.album_filter_frame, self.album_buttons_frame, stacked_panel_actions, 3, 4)
-        self.reflow_filter_actions(self.album_song_filter_frame, self.album_song_buttons_frame, stacked_panel_actions, 3, 4)
-        self.reflow_filter_actions(self.playlist_filter_frame, self.playlist_buttons_frame, stacked_panel_actions, 3, 4)
-        self.reflow_filter_actions(self.playlist_song_filter_frame, self.playlist_song_buttons_frame, stacked_panel_actions, 3, 4)
+        self.reflow_filter_actions(self.album_filter_frame, self.album_buttons_frame, stacked_album_actions, 3, 4)
+        self.reflow_filter_actions(self.album_song_filter_frame, self.album_song_buttons_frame, stacked_album_song_actions, 3, 4)
+        self.reflow_filter_actions(self.playlist_filter_frame, self.playlist_buttons_frame, stacked_playlist_actions, 3, 4)
+        self.reflow_filter_actions(self.playlist_song_filter_frame, self.playlist_song_buttons_frame, stacked_playlist_song_actions, 3, 4)
 
         self.transport_controls.grid_configure(row=0, column=0, sticky="w")
         if compact_controls:
@@ -814,15 +974,13 @@ class AudioPlayerApp:
         else:
             self.utility_controls.grid_configure(row=0, column=1, sticky="e", pady=0)
 
-        next_album_orient = tk.VERTICAL if stacked_split_view else tk.HORIZONTAL
-        next_content_orient = tk.VERTICAL if stacked_main_content else tk.HORIZONTAL
-
         album_orient_changed = str(self.albums_content.cget("orient")) != str(next_album_orient)
         content_orient_changed = str(self.content.cget("orient")) != str(next_content_orient)
 
         self.configure_split_view(self.albums_content, stacked_split_view)
         self.content.configure(orient=next_content_orient)
         self.playlist_pane.configure(orient=tk.VERTICAL)
+        self.configure_pane_limits(content_stacked, albums_stacked)
 
         if not self.initial_pane_layout_applied or album_orient_changed or content_orient_changed:
             self.initial_pane_layout_applied = True
@@ -838,13 +996,15 @@ class AudioPlayerApp:
         songs_width = max(self.library_tree.winfo_width(), 620)
         songs_usable = max(songs_width - 24, 520)
         plays_width = 70
-        title_width = max(170, int(songs_usable * 0.26))
-        artist_width = max(130, int(songs_usable * 0.19))
-        album_width = max(150, int(songs_usable * 0.23))
-        filename_width = max(150, songs_usable - title_width - artist_width - album_width - plays_width)
+        bpm_width = 74
+        title_width = max(170, int(songs_usable * 0.24))
+        artist_width = max(130, int(songs_usable * 0.18))
+        album_width = max(150, int(songs_usable * 0.21))
+        filename_width = max(150, songs_usable - title_width - artist_width - album_width - bpm_width - plays_width)
         self.library_tree.column("title", width=title_width, minwidth=140, stretch=True)
         self.library_tree.column("artist", width=artist_width, minwidth=110, stretch=True)
         self.library_tree.column("album", width=album_width, minwidth=120, stretch=True)
+        self.library_tree.column("bpm", width=bpm_width, minwidth=70, stretch=False, anchor="center")
         self.library_tree.column("plays", width=plays_width, minwidth=60, stretch=False, anchor="center")
         self.library_tree.column("filename", width=filename_width, minwidth=140, stretch=True)
 
@@ -860,23 +1020,27 @@ class AudioPlayerApp:
         album_song_width = max(self.album_song_tree.winfo_width(), 420 if not stacked_split_view else 560)
         album_song_usable = max(album_song_width - 24, 340)
         song_plays_width = 70
-        song_title_width = max(170, int(album_song_usable * 0.38))
-        song_artist_width = max(120, int(album_song_usable * 0.22))
-        song_filename_width = max(140, album_song_usable - song_title_width - song_artist_width - song_plays_width)
+        song_bpm_width = 74
+        song_title_width = max(170, int(album_song_usable * 0.35))
+        song_artist_width = max(120, int(album_song_usable * 0.20))
+        song_filename_width = max(140, album_song_usable - song_title_width - song_artist_width - song_bpm_width - song_plays_width)
         self.album_song_tree.column("title", width=song_title_width, minwidth=140, stretch=True)
         self.album_song_tree.column("artist", width=song_artist_width, minwidth=110, stretch=True)
+        self.album_song_tree.column("bpm", width=song_bpm_width, minwidth=70, stretch=False, anchor="center")
         self.album_song_tree.column("plays", width=song_plays_width, minwidth=60, stretch=False, anchor="center")
         self.album_song_tree.column("filename", width=song_filename_width, minwidth=130, stretch=True)
 
         playlist_width = max(self.playlist_tree.winfo_width(), 420 if not stacked_split_view else 560)
         playlist_usable = max(playlist_width - 24, 340)
         playlist_plays_width = 70
-        playlist_title_width = max(160, int(playlist_usable * 0.35))
-        playlist_artist_width = max(120, int(playlist_usable * 0.22))
-        playlist_album_width = max(130, playlist_usable - playlist_title_width - playlist_artist_width - playlist_plays_width)
+        playlist_bpm_width = 74
+        playlist_title_width = max(160, int(playlist_usable * 0.32))
+        playlist_artist_width = max(120, int(playlist_usable * 0.20))
+        playlist_album_width = max(130, playlist_usable - playlist_title_width - playlist_artist_width - playlist_bpm_width - playlist_plays_width)
         self.playlist_tree.column("title", width=playlist_title_width, minwidth=140, stretch=True)
         self.playlist_tree.column("artist", width=playlist_artist_width, minwidth=110, stretch=True)
         self.playlist_tree.column("album", width=playlist_album_width, minwidth=120, stretch=True)
+        self.playlist_tree.column("bpm", width=playlist_bpm_width, minwidth=70, stretch=False, anchor="center")
         self.playlist_tree.column("plays", width=playlist_plays_width, minwidth=60, stretch=False, anchor="center")
 
     def normalized_query(self, value):
@@ -891,6 +1055,7 @@ class AudioPlayerApp:
             song.artist or "",
             song.album or "",
             song.filename,
+            str(song.bpm or ""),
         )
         return any(query in field.casefold() for field in fields)
 
@@ -1018,19 +1183,27 @@ class AudioPlayerApp:
                 song.title,
                 song.artist or "Unknown Artist",
                 song.album or "Singles / Unassigned",
+                self.bpm_label(song),
                 song.play_count,
                 song.filename,
             )
 
         if tree is self.album_song_tree:
-            return (song.title, song.artist or "Unknown Artist", song.play_count, song.filename)
+            return (song.title, song.artist or "Unknown Artist", self.bpm_label(song), song.play_count, song.filename)
 
         return (
             song.title,
             song.artist or "Unknown Artist",
             song.album or "Singles / Unassigned",
+            self.bpm_label(song),
             song.play_count,
         )
+
+    def bpm_label(self, song):
+        if song.id in self.bpm_analysis_song_ids:
+            return "Analyzing..."
+
+        return str(song.bpm) if song.bpm else ""
 
     def update_song_tree_rows(self, song):
         for tree in (self.library_tree, self.album_song_tree, self.playlist_tree):
@@ -1130,13 +1303,7 @@ class AudioPlayerApp:
                 "",
                 tk.END,
                 iid=song.id,
-                values=(
-                    song.title,
-                    song.artist or "Unknown Artist",
-                    song.album or "Singles / Unassigned",
-                    song.play_count,
-                    song.filename,
-                ),
+                values=self.song_tree_values(self.library_tree, song),
             )
 
         existing_selection = [song_id for song_id in selected_song_ids if self.library_tree.exists(song_id)]
@@ -1233,7 +1400,7 @@ class AudioPlayerApp:
                 "",
                 tk.END,
                 iid=song.id,
-                values=(song.title, song.artist or "Unknown Artist", song.play_count, song.filename),
+                values=self.song_tree_values(self.album_song_tree, song),
             )
 
         existing_selection = [song_id for song_id in selected_song_ids if self.album_song_tree.exists(song_id)]
@@ -1299,12 +1466,7 @@ class AudioPlayerApp:
                 "",
                 tk.END,
                 iid=song.id,
-                values=(
-                    song.title,
-                    song.artist or "Unknown Artist",
-                    song.album or "Singles / Unassigned",
-                    song.play_count,
-                ),
+                values=self.song_tree_values(self.playlist_tree, song),
             )
 
         if selected_song_id and self.playlist_tree.exists(selected_song_id):
@@ -1405,6 +1567,232 @@ class AudioPlayerApp:
             self.status_label.config(text=f"Removed {removed_songs[0].title}")
         else:
             self.status_label.config(text=f"Removed {len(removed_songs)} songs")
+
+    def analyze_bpm_for_song_ids(self, song_ids):
+        songs = self.songs_from_ids(song_ids)
+        if not songs:
+            messagebox.showinfo("Select songs", "Choose one or more songs first.")
+            return
+
+        pending_songs = [song for song in songs if song.id not in self.bpm_analysis_song_ids]
+        if not pending_songs:
+            self.status_label.config(text="BPM analysis is already running for the selected song(s).")
+            return
+
+        for song in pending_songs:
+            self.bpm_analysis_song_ids.add(song.id)
+            self.update_song_tree_rows(song)
+
+        if len(pending_songs) == 1:
+            self.status_label.config(text=f"Analyzing BPM: {describe_song(pending_songs[0])}")
+        else:
+            self.status_label.config(text=f"Analyzing BPM for {len(pending_songs)} songs")
+
+        analysis_items = [(song.id, song.title, self.library.song_path(song)) for song in pending_songs]
+
+        def worker():
+            results = []
+            failures = []
+            for song_id, title, path in analysis_items:
+                if not path.exists():
+                    failures.append(f"{title}: missing file")
+                    continue
+
+                bpm = analyze_bpm(path)
+                if bpm is None:
+                    failures.append(f"{title}: no clear tempo")
+                else:
+                    results.append((song_id, bpm))
+
+            try:
+                self.root.after(0, lambda: self.apply_bpm_results(analysis_items, results, failures))
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_bpm_results(self, analysis_items, results, failures):
+        for song_id, _title, _path in analysis_items:
+            self.bpm_analysis_song_ids.discard(song_id)
+
+        updated_songs = []
+        for song_id, bpm in results:
+            song = self.library.update_bpm(song_id, bpm)
+            if song:
+                updated_songs.append(song)
+
+        for song_id, _title, _path in analysis_items:
+            song = self.library.get_song(song_id)
+            if song:
+                self.update_song_tree_rows(song)
+
+        if updated_songs:
+            if len(updated_songs) == 1:
+                self.status_label.config(text=f"BPM: {describe_song(updated_songs[0])} is {updated_songs[0].bpm}")
+            else:
+                self.status_label.config(text=f"Analyzed BPM for {len(updated_songs)} songs")
+        elif failures:
+            self.status_label.config(text="BPM analysis could not find a clear tempo.")
+        else:
+            self.status_label.config(text="BPM analysis finished.")
+
+        if failures:
+            messagebox.showwarning("BPM analysis", "\n".join(failures[:12]))
+
+    def set_bpm_for_song_ids(self, song_ids):
+        songs = self.songs_from_ids(song_ids)
+        if not songs:
+            messagebox.showinfo("Select songs", "Choose one or more songs first.")
+            return
+
+        initial_value = songs[0].bpm or 120
+        bpm = simpledialog.askinteger(
+            "Set BPM",
+            "BPM:",
+            initialvalue=initial_value,
+            minvalue=1,
+            maxvalue=300,
+        )
+        if bpm is None:
+            return
+
+        self.apply_bpm_to_songs(songs, bpm, "Set BPM")
+
+    def apply_bpm_to_songs(self, songs, bpm, action_label):
+        updated_songs = []
+        for song in songs:
+            updated_song = self.library.update_bpm(song.id, bpm)
+            if updated_song:
+                updated_songs.append(updated_song)
+                self.update_song_tree_rows(updated_song)
+
+        if len(updated_songs) == 1:
+            self.status_label.config(text=f"{action_label}: {describe_song(updated_songs[0])} is {bpm}")
+        else:
+            self.status_label.config(text=f"{action_label} to {bpm} for {len(updated_songs)} songs")
+
+    def open_tap_bpm_for_song_ids(self, song_ids):
+        songs = self.songs_from_ids(song_ids)
+        if not songs:
+            messagebox.showinfo("Select songs", "Choose one or more songs first.")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Tap BPM")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.configure(background=self.card_bg)
+        dialog.columnconfigure(0, weight=1)
+
+        tap_times = []
+        bpm_var = tk.StringVar(value="--")
+        tap_count_var = tk.StringVar(value="0 taps")
+        hint_var = tk.StringVar(value="Click the pad with the beat.")
+
+        target_label = describe_song(songs[0]) if len(songs) == 1 else f"{len(songs)} selected songs"
+        ttk.Label(dialog, text=target_label, style="CardHint.TLabel", anchor="center").grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(16, 6),
+        )
+        ttk.Label(dialog, textvariable=bpm_var, background=self.card_bg, foreground=self.text_color, font=("Helvetica Neue", 34, "bold")).grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=18,
+        )
+        ttk.Label(dialog, text="BPM", style="CardHint.TLabel", anchor="center").grid(row=2, column=0, sticky="ew", padx=18)
+
+        tap_button = tk.Button(
+            dialog,
+            text="TAP",
+            command=lambda: register_tap(),
+            bg="#2f6fed",
+            fg="#ffffff",
+            activebackground="#2459bd",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            padx=36,
+            pady=20,
+            font=("Helvetica Neue", 22, "bold"),
+            cursor="hand2",
+        )
+        tap_button.grid(row=3, column=0, sticky="nsew", padx=18, pady=(14, 10))
+        tap_button.configure(width=10, height=4)
+
+        ttk.Label(dialog, textvariable=tap_count_var, style="CardHint.TLabel", anchor="center").grid(row=4, column=0, sticky="ew", padx=18)
+        ttk.Label(dialog, textvariable=hint_var, style="CardHint.TLabel", anchor="center").grid(row=5, column=0, sticky="ew", padx=18, pady=(2, 12))
+
+        buttons = ttk.Frame(dialog, style="Card.TFrame")
+        buttons.grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 16))
+        buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
+        buttons.columnconfigure(2, weight=1)
+
+        def current_bpm():
+            try:
+                return int(round(float(bpm_var.get())))
+            except ValueError:
+                return None
+
+        def update_bpm():
+            if len(tap_times) < 2:
+                bpm_var.set("--")
+                tap_count_var.set(f"{len(tap_times)} tap" if len(tap_times) == 1 else "0 taps")
+                return
+
+            intervals = [later - earlier for earlier, later in zip(tap_times, tap_times[1:]) if 0.18 <= later - earlier <= 2.4]
+            if not intervals:
+                bpm_var.set("--")
+                tap_count_var.set(f"{len(tap_times)} taps")
+                return
+
+            recent_intervals = intervals[-12:]
+            median_interval = sorted(recent_intervals)[len(recent_intervals) // 2]
+            filtered = [interval for interval in recent_intervals if abs(interval - median_interval) <= median_interval * 0.22]
+            bpm = 60.0 / (sum(filtered) / len(filtered or recent_intervals))
+            bpm_var.set(str(int(round(max(1, min(300, bpm))))))
+            tap_count_var.set(f"{len(tap_times)} taps")
+
+        def register_tap():
+            now = time.monotonic()
+            if tap_times and now - tap_times[-1] > 3.0:
+                tap_times.clear()
+
+            tap_times.append(now)
+            if len(tap_times) > 16:
+                del tap_times[:-16]
+            update_bpm()
+
+        def reset_taps():
+            tap_times.clear()
+            bpm_var.set("--")
+            tap_count_var.set("0 taps")
+            hint_var.set("Click the pad with the beat.")
+
+        def apply_tapped_bpm():
+            bpm = current_bpm()
+            if bpm is None:
+                hint_var.set("Tap at least twice to calculate BPM.")
+                return
+
+            self.apply_bpm_to_songs(songs, bpm, "Tapped BPM")
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Reset", command=reset_taps, style="Action.TButton").grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy, style="Action.TButton").grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(buttons, text="Apply", command=apply_tapped_bpm, style="Action.TButton").grid(row=0, column=2, sticky="ew", padx=(6, 0))
+
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.update_idletasks()
+
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - dialog.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - dialog.winfo_height()) // 3)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.focus_set()
 
     def rename_song(self, song_ids=None):
         songs = self.songs_from_ids(song_ids or self.get_selected_library_song_ids())
@@ -1696,6 +2084,9 @@ class AudioPlayerApp:
         else:
             selected_ids = self.get_selected_library_song_ids()
             menu.add_command(label="Play", command=self.play_selected_library_song)
+            menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids(selected_ids))
+            menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids(selected_ids))
+            menu.add_command(label="Set BPM...", command=lambda: self.set_bpm_for_song_ids(selected_ids))
             menu.add_separator()
             menu.add_command(
                 label="Add to Selected Playlist",
@@ -1737,6 +2128,9 @@ class AudioPlayerApp:
         selected_ids = self.get_selected_album_song_ids()
         menu = tk.Menu(self.root, tearoff=False)
         menu.add_command(label="Play", command=self.play_selected_album_song)
+        menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids(selected_ids))
+        menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids(selected_ids))
+        menu.add_command(label="Set BPM...", command=lambda: self.set_bpm_for_song_ids(selected_ids))
         menu.add_separator()
         menu.add_command(
             label="Add to Selected Playlist",
@@ -1771,6 +2165,9 @@ class AudioPlayerApp:
 
         menu = tk.Menu(self.root, tearoff=False)
         menu.add_command(label="Play", command=self.play_selected_playlist_song)
+        menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids([item_id]))
+        menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids([item_id]))
+        menu.add_command(label="Set BPM...", command=lambda: self.set_bpm_for_song_ids([item_id]))
         menu.add_separator()
         menu.add_command(label="Remove From Playlist", command=self.remove_song_from_playlist)
         self.popup_menu(menu, event)
@@ -1933,20 +2330,25 @@ class AudioPlayerApp:
         self.current_queue_index = valid_queue.index(song_id)
         self.current_queue_source = source_name
         self.current_song_id = song_id
+        self.load_waveform_for_song(song_id, path)
         song = self.library.increment_play_count(song_id) or song
         self.update_song_tree_rows(song)
         self.status_label.config(text=f"Now playing: {describe_song(song)}")
         self.update_progress_ui()
 
-        if self.library_tree.exists(song_id):
-            self.library_tree.selection_set(song_id)
-            self.library_tree.focus(song_id)
-        if self.album_song_tree.exists(song_id):
-            self.album_song_tree.selection_set(song_id)
-            self.album_song_tree.focus(song_id)
-        if self.playlist_tree.exists(song_id):
-            self.playlist_tree.selection_set(song_id)
-            self.playlist_tree.focus(song_id)
+        self.syncing_playback_selection = True
+        try:
+            if self.library_tree.exists(song_id):
+                self.library_tree.selection_set(song_id)
+                self.library_tree.focus(song_id)
+            if self.album_song_tree.exists(song_id):
+                self.album_song_tree.selection_set(song_id)
+                self.album_song_tree.focus(song_id)
+            if self.playlist_tree.exists(song_id):
+                self.playlist_tree.selection_set(song_id)
+                self.playlist_tree.focus(song_id)
+        finally:
+            self.syncing_playback_selection = False
 
     def play_selected_library_song(self):
         song_id = self.get_primary_library_song_id()
@@ -1997,24 +2399,45 @@ class AudioPlayerApp:
 
     def play_selected(self):
         focused_widget = self.root.focus_get()
+        if focused_widget == self.library_tree and self.get_primary_library_song_id():
+            self.play_selected_library_song()
+            return
+
+        if focused_widget == self.album_tree and self.get_selected_album_key() is not None:
+            self.play_album()
+            return
+
         if focused_widget == self.album_song_tree and self.get_primary_album_song_id():
             self.play_selected_album_song()
+            return
+
+        if focused_widget == self.playlist_list and self.get_selected_playlist_name():
+            self.play_selected_playlist_song()
             return
 
         if focused_widget == self.playlist_tree and self.get_selected_playlist_song_id():
             self.play_selected_playlist_song()
             return
 
-        if focused_widget == self.library_tree and self.get_primary_library_song_id():
+        if self.active_play_source == "library" and self.get_primary_library_song_id():
             self.play_selected_library_song()
             return
 
-        if self.get_primary_album_song_id():
+        if self.active_play_source == "album" and self.get_selected_album_key() is not None:
+            self.play_album()
+            return
+
+        if self.active_play_source == "album_song" and self.get_primary_album_song_id():
             self.play_selected_album_song()
             return
 
-        if self.get_selected_playlist_song_id():
+        if self.active_play_source in ("playlist", "playlist_song") and self.get_selected_playlist_song_id():
             self.play_selected_playlist_song()
+            return
+
+        current_tab = self.current_notebook_tab()
+        if current_tab == str(self.albums_tab) and self.get_selected_album_key() is not None:
+            self.play_album()
             return
 
         self.play_selected_library_song()
@@ -2093,35 +2516,131 @@ class AudioPlayerApp:
 
     def update_progress_ui(self, reset=False):
         if reset or self.current_song_id is None:
-            self.progress_scale.configure(to=100)
             self.progress_var.set(0.0)
             self.time_label_var.set("0:00 / 0:00")
+            self.waveform_peaks = []
+            self.waveform_loading = False
+            self.draw_waveform()
             return
 
         duration = self.player.duration()
         current_time = self.player.current_time()
         upper_bound = duration if duration > 0 else 100
-        self.progress_scale.configure(to=max(upper_bound, 1))
         if not self.dragging_progress:
             self.progress_var.set(min(current_time, upper_bound))
         self.time_label_var.set(f"{format_seconds(current_time)} / {format_seconds(duration)}")
+        self.draw_waveform()
 
-    def on_progress_press(self, _event):
-        if self.current_song_id is None:
+    def load_waveform_for_song(self, song_id, path):
+        self.waveform_job_token += 1
+        token = self.waveform_job_token
+        self.waveform_peaks = []
+        self.waveform_loading = True
+        self.draw_waveform()
+
+        def worker():
+            try:
+                peaks = build_waveform_peaks(path)
+            except Exception:
+                peaks = []
+
+            try:
+                self.root.after(0, lambda: self.apply_waveform(token, song_id, peaks))
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_waveform(self, token, song_id, peaks):
+        if token != self.waveform_job_token or song_id != self.current_song_id:
             return
-        self.dragging_progress = True
 
-    def on_progress_drag(self, value):
+        self.waveform_peaks = peaks
+        self.waveform_loading = False
+        self.draw_waveform()
+
+    def draw_waveform(self):
+        canvas = getattr(self, "waveform_canvas", None)
+        if canvas is None:
+            return
+
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        canvas.delete("all")
+
+        center_y = height / 2
+        canvas.create_line(0, center_y, width, center_y, fill="#eef2f7")
+
+        peaks = self.waveform_peaks
+        if not peaks:
+            peaks = self.placeholder_waveform_peaks(width)
+
+        duration = self.player.duration() if self.current_song_id else 0.0
+        progress_ratio = 0.0
+        if duration > 0:
+            progress_ratio = min(1.0, max(0.0, self.progress_var.get() / duration))
+
+        count = len(peaks)
+        bar_gap = 2
+        bar_width = max(2, min(5, int(width / max(count, 1)) - bar_gap))
+        empty_color = "#d8e0eb" if not self.waveform_loading else "#e8edf4"
+        active_color = "#2f6fed"
+
+        for index, peak in enumerate(peaks):
+            x_center = (index + 0.5) * width / count
+            x0 = max(1, x_center - bar_width / 2)
+            x1 = min(width - 1, x_center + bar_width / 2)
+            amplitude = max(0.08, min(1.0, peak)) * (height * 0.38)
+            y0 = center_y - amplitude
+            y1 = center_y + amplitude
+            color = active_color if ((index + 0.5) / count) <= progress_ratio else empty_color
+            canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+
+        if duration > 0:
+            cursor_x = progress_ratio * width
+            canvas.create_line(cursor_x, 8, cursor_x, height - 8, fill="#2459bd", width=2)
+
+    def placeholder_waveform_peaks(self, width):
+        count = max(36, min(140, width // 7))
+        peaks = []
+        for index in range(count):
+            low_pulse = 0.12 + 0.10 * (index % 5) / 4
+            high_pulse = 0.12 * ((index * 7) % 11) / 10
+            peaks.append(low_pulse + high_pulse)
+        return peaks
+
+    def update_progress_from_event(self, event):
         if self.current_song_id is None:
             return
 
         duration = self.player.duration()
-        self.time_label_var.set(f"{format_seconds(float(value))} / {format_seconds(duration)}")
+        if duration <= 0:
+            return
 
-    def on_progress_release(self, _event):
+        width = max(1, self.waveform_canvas.winfo_width())
+        ratio = min(1.0, max(0.0, event.x / width))
+        target_time = duration * ratio
+        self.progress_var.set(target_time)
+        self.time_label_var.set(f"{format_seconds(target_time)} / {format_seconds(duration)}")
+        self.draw_waveform()
+
+    def on_progress_press(self, event):
+        if self.current_song_id is None:
+            return
+        self.dragging_progress = True
+        self.update_progress_from_event(event)
+
+    def on_progress_drag(self, event):
         if self.current_song_id is None:
             return
 
+        self.update_progress_from_event(event)
+
+    def on_progress_release(self, event):
+        if self.current_song_id is None:
+            return
+
+        self.update_progress_from_event(event)
         self.dragging_progress = False
         self.player.seek(self.progress_var.get())
         self.update_progress_ui()

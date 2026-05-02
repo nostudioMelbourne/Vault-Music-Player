@@ -180,6 +180,15 @@ class LibraryManager:
         self.save_library()
         return song
 
+    def update_bpm(self, song_id, bpm):
+        song = self.get_song(song_id)
+        if song is None:
+            return None
+
+        song.bpm = int(bpm) if bpm and int(bpm) > 0 else None
+        self.save_library()
+        return song
+
     def sorted_songs(self):
         return sorted(
             self.library,
