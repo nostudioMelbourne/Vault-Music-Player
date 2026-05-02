@@ -1,0 +1,16 @@
+[
+  {
+    "id": "d828cb36ffdb48bb9d42fc5a3f515a3a",
+    "filename": "01 Intro.mp3",
+    "title": "01 Intro",
+    "artist": "Test Artist",
+    "album": "Test Album"
+  },
+  {
+    "id": "9751751c9d344e73a533eb3c2de9fb4d",
+    "filename": "02 Track.flac",
+    "title": "02 Track",
+    "artist": "Test Artist",
+    "album": "Test Album"
+  }
+]
