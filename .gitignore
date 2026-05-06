@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Local app data and manual test fixtures
+.appdata/
+.album-import-test/
+.export-test/
+songs/
+playlists/
+
+# Build and release output
+build/
+dist/
+release/
+*.app/
+*.dmg
+*.zip
+
+# Logs and temporary files
+*.log
+*.tmp
