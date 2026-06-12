@@ -1,9 +1,15 @@
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
+
+if __package__ in (None, ""):
+    package_dir = Path(__file__).resolve().parent
+    sys.path.insert(0, str(package_dir.parent))
+    __package__ = package_dir.name
 
 from .bpm import analyze_bpm
 from .config import build_paths
@@ -2684,3 +2690,7 @@ def main():
 
     root.protocol("WM_DELETE_WINDOW", lambda: (app.player.stop(), root.destroy()))
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
