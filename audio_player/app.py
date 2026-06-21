@@ -1,3 +1,4 @@
+import math
 import subprocess
 import sys
 import threading
@@ -15,6 +16,7 @@ from .bpm import analyze_bpm
 from .config import build_paths
 from .library import LibraryManager
 from .playback import NSSoundBackend
+from .spectral import build_spectrum_analysis
 from .utils import describe_song, format_seconds, sanitize_name
 from .waveform import build_waveform_peaks
 
@@ -43,6 +45,11 @@ class AudioPlayerApp:
         self.waveform_peaks = []
         self.waveform_loading = False
         self.waveform_job_token = 0
+        self.spectrum_analysis = None
+        self.spectrum_loading = False
+        self.spectrum_unavailable = False
+        self.spectrum_display_bands = []
+        self.spectrum_peak_bands = []
         self.bpm_analysis_song_ids = set()
         self.resize_job = None
 
@@ -75,6 +82,7 @@ class AudioPlayerApp:
         self.refresh_all_views()
         self.update_progress_ui(reset=True)
         self.root.after(250, self.poll_player)
+        self.root.after(50, self.animate_spectrum)
 
     def build_ui(self):
         self.configure_theme()
@@ -161,6 +169,17 @@ class AudioPlayerApp:
             style="CardHint.TLabel",
         )
         self.time_label.grid(row=0, column=1, padx=(12, 0))
+
+        self.spectrum_canvas = tk.Canvas(
+            self.progress_frame,
+            height=82,
+            background="#101722",
+            highlightthickness=1,
+            highlightbackground="#263448",
+            bd=0,
+        )
+        self.spectrum_canvas.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.spectrum_canvas.bind("<Configure>", lambda _event: self.draw_spectrum())
 
         self.content = self.create_panedwindow(self.container, orient=tk.HORIZONTAL)
         self.content.pack(fill=tk.BOTH, expand=True)
@@ -909,6 +928,8 @@ class AudioPlayerApp:
         self.container.configure(padding=10 if compact_chrome else 14)
         self.controls_card.configure(padding=8 if compact_chrome else 12)
         self.progress_frame.configure(padding=8 if compact_chrome else 12)
+        self.waveform_canvas.configure(height=48 if compact_chrome else 58)
+        self.spectrum_canvas.configure(height=64 if compact_chrome else 82)
         self.set_grid_visibility(self.header_subtitle, not compact_chrome)
         self.set_grid_visibility(self.songs_hint_label, not hidden_hints)
         self.set_grid_visibility(self.albums_hint_label, not hidden_hints)
@@ -2526,7 +2547,13 @@ class AudioPlayerApp:
             self.time_label_var.set("0:00 / 0:00")
             self.waveform_peaks = []
             self.waveform_loading = False
+            self.spectrum_analysis = None
+            self.spectrum_loading = False
+            self.spectrum_unavailable = False
+            self.spectrum_display_bands = []
+            self.spectrum_peak_bands = []
             self.draw_waveform()
+            self.draw_spectrum()
             return
 
         duration = self.player.duration()
@@ -2542,7 +2569,13 @@ class AudioPlayerApp:
         token = self.waveform_job_token
         self.waveform_peaks = []
         self.waveform_loading = True
+        self.spectrum_analysis = None
+        self.spectrum_loading = True
+        self.spectrum_unavailable = False
+        self.spectrum_display_bands = []
+        self.spectrum_peak_bands = []
         self.draw_waveform()
+        self.draw_spectrum()
 
         def worker():
             try:
@@ -2552,6 +2585,16 @@ class AudioPlayerApp:
 
             try:
                 self.root.after(0, lambda: self.apply_waveform(token, song_id, peaks))
+            except RuntimeError:
+                return
+
+            try:
+                analysis = build_spectrum_analysis(path)
+            except Exception:
+                analysis = None
+
+            try:
+                self.root.after(0, lambda: self.apply_spectrum(token, song_id, analysis))
             except RuntimeError:
                 pass
 
@@ -2564,6 +2607,17 @@ class AudioPlayerApp:
         self.waveform_peaks = peaks
         self.waveform_loading = False
         self.draw_waveform()
+
+    def apply_spectrum(self, token, song_id, analysis):
+        if token != self.waveform_job_token or song_id != self.current_song_id:
+            return
+
+        self.spectrum_analysis = analysis
+        self.spectrum_loading = False
+        self.spectrum_unavailable = analysis is None
+        self.spectrum_display_bands = []
+        self.spectrum_peak_bands = []
+        self.draw_spectrum()
 
     def draw_waveform(self):
         canvas = getattr(self, "waveform_canvas", None)
@@ -2614,6 +2668,112 @@ class AudioPlayerApp:
             high_pulse = 0.12 * ((index * 7) % 11) / 10
             peaks.append(low_pulse + high_pulse)
         return peaks
+
+    def animate_spectrum(self):
+        self.draw_spectrum()
+        actively_animating = self.spectrum_analysis is not None and self.player.is_playing()
+        self.root.after(50 if actively_animating else 200, self.animate_spectrum)
+
+    def draw_spectrum(self):
+        canvas = getattr(self, "spectrum_canvas", None)
+        if canvas is None:
+            return
+
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        canvas.delete("all")
+
+        plot_left = 10
+        plot_right = max(plot_left + 1, width - 10)
+        plot_top = 22
+        plot_bottom = max(plot_top + 1, height - 17)
+        plot_height = plot_bottom - plot_top
+
+        canvas.create_text(
+            plot_left,
+            7,
+            text="SPECTRUM",
+            anchor="nw",
+            fill="#8fa2ba",
+            font=("Helvetica Neue", 9, "bold"),
+        )
+
+        for ratio in (0.25, 0.5, 0.75, 1.0):
+            y = plot_bottom - plot_height * ratio
+            canvas.create_line(plot_left, y, plot_right, y, fill="#1b2838")
+
+        if self.current_song_id is None:
+            self.draw_spectrum_message("PLAY A TRACK TO VIEW FREQUENCIES", width, height)
+            return
+
+        if self.spectrum_loading:
+            self.draw_spectrum_message("ANALYSING AUDIO...", width, height)
+            return
+
+        analysis = self.spectrum_analysis
+        if self.spectrum_unavailable or analysis is None:
+            self.draw_spectrum_message("SPECTRUM UNAVAILABLE", width, height)
+            return
+
+        target_bands = analysis.frame_at(self.player.current_time())
+        band_count = len(target_bands)
+        if band_count == 0:
+            self.draw_spectrum_message("NO SPECTRAL DATA", width, height)
+            return
+
+        if len(self.spectrum_display_bands) != band_count:
+            self.spectrum_display_bands = [0.0] * band_count
+            self.spectrum_peak_bands = [0.0] * band_count
+
+        slot_width = (plot_right - plot_left) / band_count
+        bar_width = max(2.0, slot_width * 0.68)
+
+        for index, target in enumerate(target_bands):
+            target = float(target)
+            displayed = self.spectrum_display_bands[index]
+            response = 0.46 if target > displayed else 0.16
+            displayed += (target - displayed) * response
+            displayed = min(1.0, max(0.0, displayed))
+            self.spectrum_display_bands[index] = displayed
+
+            peak = max(displayed, self.spectrum_peak_bands[index] - 0.012)
+            self.spectrum_peak_bands[index] = peak
+
+            x_center = plot_left + (index + 0.5) * slot_width
+            x0 = x_center - bar_width / 2
+            x1 = x_center + bar_width / 2
+            y0 = plot_bottom - displayed * plot_height
+            peak_y = plot_bottom - peak * plot_height
+            fill = "#5bd6d0" if displayed > 0.82 else "#39a9e8" if displayed > 0.58 else "#2f6fed"
+
+            canvas.create_rectangle(x0, y0, x1, plot_bottom, fill=fill, outline="")
+            canvas.create_line(x0, peak_y, x1, peak_y, fill="#d8fbff")
+
+        min_frequency = analysis.frequencies[0]
+        max_frequency = analysis.frequencies[-1]
+        for frequency, label in ((60, "60"), (250, "250"), (1000, "1K"), (4000, "4K"), (16000, "16K")):
+            if frequency < min_frequency or frequency > max_frequency:
+                continue
+
+            ratio = math.log(frequency / min_frequency) / math.log(max_frequency / min_frequency)
+            x = plot_left + ratio * (plot_right - plot_left)
+            canvas.create_text(
+                x,
+                height - 5,
+                text=label,
+                anchor="s",
+                fill="#6f8299",
+                font=("Helvetica Neue", 8),
+            )
+
+    def draw_spectrum_message(self, text, width, height):
+        self.spectrum_canvas.create_text(
+            width / 2,
+            height / 2 + 4,
+            text=text,
+            fill="#6f8299",
+            font=("Helvetica Neue", 9, "bold"),
+        )
 
     def update_progress_from_event(self, event):
         if self.current_song_id is None:

@@ -1,6 +1,6 @@
 # Vault Music
 
-Vault Music is a small macOS desktop music-library app for local audio files. It imports songs, groups albums, manages playlists, shows waveform progress, estimates BPM when NumPy is available, and exports playlists as portable bundles.
+Vault Music is a small macOS desktop music-library app for local audio files. It imports songs, groups albums, manages playlists, shows waveform progress and a synchronized spectral analyser, estimates BPM when NumPy is available, and exports playlists as portable bundles.
 
 ## Requirements
 
