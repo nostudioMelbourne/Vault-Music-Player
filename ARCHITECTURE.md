@@ -33,6 +33,7 @@ flowchart TD
         ui --> playlistview[Playlist sidebar]
         ui --> transport[Transport controls]
         ui --> waveformcanvas[Waveform canvas]
+        ui --> spectrumcanvas[Spectrum analyser canvas]
     end
 
     subgraph Domain["Application Domain"]
@@ -45,6 +46,7 @@ flowchart TD
     subgraph Services["Platform / Analysis Services"]
         playback[NSSoundBackend<br/>audio_player.playback]
         waveform[Waveform peak builder<br/>audio_player.waveform]
+        spectral[Spectrum FFT builder<br/>audio_player.spectral]
         bpm[BPM analyzer<br/>audio_player.bpm]
         config[Path builder<br/>audio_player.config]
     end
@@ -67,6 +69,7 @@ flowchart TD
     ui --> library
     ui --> playback
     ui --> waveform
+    ui --> spectral
     ui --> bpm
     ui --> config
     ui --> assets[assets/app_icon.*]
@@ -88,6 +91,8 @@ flowchart TD
     playback --> nssound
     playback --> pyobjc
     waveform --> afconvert
+    spectral --> afconvert
+    spectral --> numpy
     bpm --> afconvert
     bpm --> numpy
 ```
@@ -145,7 +150,7 @@ sequenceDiagram
     participant App as AudioPlayerApp
     participant Library as LibraryManager
     participant Player as NSSoundBackend
-    participant Waveform as waveform worker thread
+    participant Analysis as audio analysis worker thread
     participant AppKit as macOS NSSound
     participant Disk as songs/
 
@@ -154,9 +159,11 @@ sequenceDiagram
     Library-->>App: Song path under songs/
     App->>Player: play(path)
     Player->>AppKit: Load and play with NSSound
-    App->>Waveform: Start daemon thread
-    Waveform->>Disk: Read WAV or convert with afconvert
-    Waveform-->>App: Schedule waveform peaks on Tk event loop
+    App->>Analysis: Start daemon thread
+    Analysis->>Disk: Read WAV or convert with afconvert
+    Analysis-->>App: Schedule waveform peaks on Tk event loop
+    Analysis->>Analysis: Calculate log-frequency FFT frames
+    Analysis-->>App: Schedule synchronized spectrum data
     App->>Library: increment_play_count()
     Library->>Disk: Save library.json
     App->>App: Poll playback every 250 ms and advance queue on finish
@@ -259,6 +266,7 @@ erDiagram
 | `audio_player.models` | Defines `Song` and `AlbumSummary` data structures. |
 | `audio_player.playback` | Wraps macOS `NSSound` playback, pause/resume, stop, seek, duration, and completion detection. |
 | `audio_player.waveform` | Produces normalized waveform peaks from WAV data and converts non-WAV files with `afconvert`. |
+| `audio_player.spectral` | Produces normalized log-frequency FFT frames for the synchronized spectrum analyser. |
 | `audio_player.bpm` | Estimates BPM using PCM analysis and NumPy, with `afconvert` conversion for non-WAV files. |
 | `audio_player.exporter` | Copies playlist audio files and writes portable `.m3u8` playlist bundles. |
 | `audio_player.utils` | Provides sanitization, unique path generation, song labels, and time formatting. |

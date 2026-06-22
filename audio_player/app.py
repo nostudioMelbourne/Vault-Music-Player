@@ -15,6 +15,7 @@ from .bpm import analyze_bpm
 from .config import build_paths
 from .library import LibraryManager
 from .playback import NSSoundBackend
+from .spectral import build_spectrogram
 from .utils import describe_song, format_seconds, sanitize_name
 from .waveform import build_waveform_peaks
 
@@ -80,9 +81,14 @@ class AudioPlayerApp:
         self.active_play_source = "library"
         self.syncing_playback_selection = False
         self.dragging_progress = False
-        self.waveform_peaks = []
-        self.waveform_loading = False
-        self.waveform_job_token = 0
+        self.spectrogram_data = None
+        self.spectrogram_loading = False
+        self.transient_peaks = []
+        self.transient_loading = False
+        self.analyzer_job_token = 0
+        self.spectrogram_photo = None
+        self.spectrogram_photo_cache_key = None
+        self.spectrogram_palette = self.build_spectrogram_palette()
         self.bpm_analysis_song_ids = set()
         self.resize_job = None
 
@@ -188,20 +194,57 @@ class AudioPlayerApp:
         self.progress_frame.pack(fill=tk.X, pady=(0, 12))
         self.progress_frame.columnconfigure(0, weight=1)
 
-        self.waveform_canvas = tk.Canvas(
-            self.progress_frame,
-            height=58,
-            background=self.card_bg,
+        self.analyzer_notebook = ttk.Notebook(self.progress_frame)
+        self.analyzer_notebook.grid(row=0, column=0, columnspan=2, sticky="ew")
+
+        self.spectrogram_tab = ttk.Frame(self.analyzer_notebook, style="Card.TFrame")
+        self.spectrogram_tab.columnconfigure(0, weight=1)
+        self.spectrogram_tab.rowconfigure(0, weight=1)
+
+        self.analyzer_canvas = tk.Canvas(
+            self.spectrogram_tab,
+            height=154,
+            background="#05070b",
             highlightthickness=1,
             highlightbackground=self.border_color,
             bd=0,
             cursor="hand2",
         )
-        self.waveform_canvas.grid(row=0, column=0, sticky="ew")
-        self.waveform_canvas.bind("<Configure>", lambda _event: self.draw_waveform())
-        self.waveform_canvas.bind("<ButtonPress-1>", self.on_progress_press)
-        self.waveform_canvas.bind("<B1-Motion>", self.on_progress_drag)
-        self.waveform_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
+        self.analyzer_canvas.grid(row=0, column=0, sticky="ew")
+        self.analyzer_canvas.bind("<Configure>", lambda _event: self.draw_spectrogram())
+        self.analyzer_canvas.bind("<ButtonPress-1>", self.on_progress_press)
+        self.analyzer_canvas.bind("<B1-Motion>", self.on_progress_drag)
+        self.analyzer_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
+
+        self.transient_tab = ttk.Frame(self.analyzer_notebook, style="Card.TFrame")
+        self.transient_tab.columnconfigure(0, weight=1)
+        self.transient_tab.rowconfigure(0, weight=1)
+
+        self.transient_canvas = tk.Canvas(
+            self.transient_tab,
+            height=154,
+            background="#050505",
+            highlightthickness=1,
+            highlightbackground=self.border_color,
+            bd=0,
+            cursor="hand2",
+        )
+        self.transient_canvas.grid(row=0, column=0, sticky="ew")
+        self.transient_canvas.bind("<Configure>", lambda _event: self.draw_transient())
+        self.transient_canvas.bind("<ButtonPress-1>", self.on_progress_press)
+        self.transient_canvas.bind("<B1-Motion>", self.on_progress_drag)
+        self.transient_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
+
+        self.analyzer_notebook.add(self.spectrogram_tab, text="Spectrogram")
+        self.analyzer_notebook.add(self.transient_tab, text="Transient")
+
+        self.analyzer_label = ttk.Label(
+            self.progress_frame,
+            text="Spectrogram analyzer",
+            anchor="w",
+            style="CardHint.TLabel",
+        )
+        self.analyzer_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
 
         self.time_label = ttk.Label(
             self.progress_frame,
@@ -210,7 +253,8 @@ class AudioPlayerApp:
             anchor="e",
             style="CardHint.TLabel",
         )
-        self.time_label.grid(row=0, column=1, padx=(12, 0))
+        self.time_label.grid(row=1, column=1, padx=(12, 0), pady=(6, 0))
+        self.analyzer_notebook.bind("<<NotebookTabChanged>>", self.on_analyzer_tab_changed)
 
         self.content = self.create_panedwindow(self.container, orient=tk.HORIZONTAL)
         self.content.pack(fill=tk.BOTH, expand=True)
@@ -1072,6 +1116,9 @@ class AudioPlayerApp:
         self.container.configure(padding=10 if compact_chrome else 14)
         self.controls_card.configure(padding=8 if compact_chrome else 12)
         self.progress_frame.configure(padding=8 if compact_chrome else 12)
+        analyzer_height = 112 if compact_chrome else 154
+        self.analyzer_canvas.configure(height=analyzer_height)
+        self.transient_canvas.configure(height=analyzer_height)
         self.set_grid_visibility(self.header_subtitle, not compact_chrome)
         self.set_grid_visibility(self.songs_hint_label, not hidden_hints)
         self.set_grid_visibility(self.albums_hint_label, not hidden_hints)
@@ -2499,7 +2546,7 @@ class AudioPlayerApp:
         self.current_queue_index = valid_queue.index(song_id)
         self.current_queue_source = source_name
         self.current_song_id = song_id
-        self.load_waveform_for_song(song_id, path)
+        self.load_analyzer_for_song(song_id, path)
         song = self.library.increment_play_count(song_id) or song
         self.update_song_tree_rows(song)
         self.status_label.config(text=f"Now playing: {describe_song(song)}")
@@ -2687,9 +2734,12 @@ class AudioPlayerApp:
         if reset or self.current_song_id is None:
             self.progress_var.set(0.0)
             self.time_label_var.set("0:00 / 0:00")
-            self.waveform_peaks = []
-            self.waveform_loading = False
-            self.draw_waveform()
+            self.spectrogram_data = None
+            self.spectrogram_loading = False
+            self.transient_peaks = []
+            self.transient_loading = False
+            self.invalidate_spectrogram_photo()
+            self.draw_current_analyzer()
             return
 
         duration = self.player.duration()
@@ -2698,52 +2748,236 @@ class AudioPlayerApp:
         if not self.dragging_progress:
             self.progress_var.set(min(current_time, upper_bound))
         self.time_label_var.set(f"{format_seconds(current_time)} / {format_seconds(duration)}")
-        self.draw_waveform()
+        self.draw_current_analyzer()
 
-    def load_waveform_for_song(self, song_id, path):
-        self.waveform_job_token += 1
-        token = self.waveform_job_token
-        self.waveform_peaks = []
-        self.waveform_loading = True
-        self.draw_waveform()
+    def load_analyzer_for_song(self, song_id, path):
+        self.analyzer_job_token += 1
+        token = self.analyzer_job_token
+        self.spectrogram_data = None
+        self.spectrogram_loading = True
+        self.transient_peaks = []
+        self.transient_loading = True
+        self.invalidate_spectrogram_photo()
+        self.draw_current_analyzer()
 
         def worker():
             try:
-                peaks = build_waveform_peaks(path)
+                peaks = build_waveform_peaks(path, target_bars=1200)
             except Exception:
                 peaks = []
 
             try:
-                self.root.after(0, lambda: self.apply_waveform(token, song_id, peaks))
+                self.root.after(0, lambda: self.apply_transient(token, song_id, peaks))
+            except RuntimeError:
+                return
+
+            try:
+                spectrogram = build_spectrogram(path)
+            except Exception:
+                spectrogram = None
+
+            try:
+                self.root.after(0, lambda: self.apply_spectrogram(token, song_id, spectrogram))
             except RuntimeError:
                 pass
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def apply_waveform(self, token, song_id, peaks):
-        if token != self.waveform_job_token or song_id != self.current_song_id:
+    def apply_transient(self, token, song_id, peaks):
+        if token != self.analyzer_job_token or song_id != self.current_song_id:
             return
 
-        self.waveform_peaks = peaks
-        self.waveform_loading = False
-        self.draw_waveform()
+        self.transient_peaks = peaks
+        self.transient_loading = False
+        if self.current_analyzer_mode() == "transient":
+            self.draw_transient()
 
-    def draw_waveform(self):
-        canvas = getattr(self, "waveform_canvas", None)
+    def apply_spectrogram(self, token, song_id, spectrogram):
+        if token != self.analyzer_job_token or song_id != self.current_song_id:
+            return
+
+        self.spectrogram_data = spectrogram
+        self.spectrogram_loading = False
+        self.invalidate_spectrogram_photo()
+        if self.current_analyzer_mode() == "spectrogram":
+            self.draw_spectrogram()
+
+    def build_spectrogram_palette(self):
+        stops = [
+            (0.00, (0, 0, 8)),
+            (0.12, (18, 0, 72)),
+            (0.28, (0, 30, 190)),
+            (0.45, (0, 205, 255)),
+            (0.62, (35, 235, 75)),
+            (0.78, (245, 245, 35)),
+            (0.91, (255, 135, 0)),
+            (1.00, (255, 25, 0)),
+        ]
+
+        palette = []
+        stop_index = 0
+        for value in range(256):
+            ratio = value / 255.0
+            while stop_index < len(stops) - 2 and ratio > stops[stop_index + 1][0]:
+                stop_index += 1
+
+            start_ratio, start_color = stops[stop_index]
+            end_ratio, end_color = stops[stop_index + 1]
+            span = max(0.0001, end_ratio - start_ratio)
+            mix = min(1.0, max(0.0, (ratio - start_ratio) / span))
+            red = int(start_color[0] + (end_color[0] - start_color[0]) * mix)
+            green = int(start_color[1] + (end_color[1] - start_color[1]) * mix)
+            blue = int(start_color[2] + (end_color[2] - start_color[2]) * mix)
+            palette.append(bytes((red, green, blue)))
+
+        return palette
+
+    def invalidate_spectrogram_photo(self):
+        self.spectrogram_photo = None
+        self.spectrogram_photo_cache_key = None
+
+    def current_analyzer_mode(self):
+        notebook = getattr(self, "analyzer_notebook", None)
+        transient_tab = getattr(self, "transient_tab", None)
+        if notebook is None or transient_tab is None:
+            return "spectrogram"
+
+        try:
+            return "transient" if notebook.select() == str(transient_tab) else "spectrogram"
+        except tk.TclError:
+            return "spectrogram"
+
+    def draw_current_analyzer(self):
+        if self.current_analyzer_mode() == "transient":
+            self.draw_transient()
+        else:
+            self.draw_spectrogram()
+
+    def on_analyzer_tab_changed(self, _event=None):
+        if not hasattr(self, "analyzer_label"):
+            return
+
+        if self.current_analyzer_mode() == "transient":
+            self.analyzer_label.configure(text="Transient analyzer")
+        else:
+            self.analyzer_label.configure(text="Spectrogram analyzer")
+
+        self.draw_current_analyzer()
+
+    def draw_spectrogram(self):
+        canvas = getattr(self, "analyzer_canvas", None)
         if canvas is None:
             return
 
         width = max(1, canvas.winfo_width())
         height = max(1, canvas.winfo_height())
+        left, top, plot_width, plot_height, show_axes, show_legend = self.spectrogram_plot_bounds(width, height)
         canvas.delete("all")
+        canvas.create_rectangle(0, 0, width, height, fill="#05070b", outline="")
+
+        if self.spectrogram_data is not None:
+            photo = self.render_spectrogram_photo(self.spectrogram_data, plot_width, plot_height)
+            canvas.create_image(left, top, image=photo, anchor="nw")
+        else:
+            self.draw_spectrogram_placeholder(canvas, left, top, plot_width, plot_height)
+
+        duration = self.player.duration() if self.current_song_id else 0.0
+        progress_ratio = 0.0
+        if duration > 0:
+            progress_ratio = min(1.0, max(0.0, self.progress_var.get() / duration))
+
+        max_frequency = self.spectrogram_data.max_frequency if self.spectrogram_data is not None else 20000.0
+        if show_axes:
+            self.draw_spectrogram_axes(canvas, left, top, plot_width, plot_height, max_frequency, duration)
+        else:
+            canvas.create_rectangle(left, top, left + plot_width, top + plot_height, outline="#1c2735")
+
+        if show_legend:
+            self.draw_spectrogram_legend(canvas, left + plot_width + 12, top, plot_height)
+
+        if self.spectrogram_loading:
+            canvas.create_text(
+                left + plot_width / 2,
+                top + plot_height / 2,
+                text="Analyzing spectrum...",
+                fill="#d6deeb",
+                font=("Helvetica Neue", 12, "bold"),
+            )
+
+        if duration > 0:
+            cursor_x = left + (progress_ratio * plot_width)
+            canvas.create_line(cursor_x, top, cursor_x, top + plot_height, fill="#ffffff", width=2)
+            canvas.create_line(cursor_x + 1, top, cursor_x + 1, top + plot_height, fill="#18212f", width=1)
+
+    def spectrogram_plot_bounds(self, width, height):
+        show_axes = width >= 460 and height >= 118
+        show_legend = width >= 620 and height >= 130
+        left = 62 if show_axes else 8
+        right = 88 if show_legend else 18 if show_axes else 8
+        top = 16 if show_axes else 8
+        bottom = 30 if show_axes else 8
+        plot_width = max(1, width - left - right)
+        plot_height = max(1, height - top - bottom)
+        return left, top, plot_width, plot_height, show_axes, show_legend
+
+    def render_spectrogram_photo(self, spectrogram, width, height):
+        values = spectrogram.values
+        cache_key = (id(values), width, height)
+        if self.spectrogram_photo is not None and self.spectrogram_photo_cache_key == cache_key:
+            return self.spectrogram_photo
+
+        source_height, source_width = values.shape
+        pixels = bytearray()
+        for y in range(height):
+            source_y = source_height - 1 - min(source_height - 1, int(y * source_height / height))
+            row = values[source_y]
+            for x in range(width):
+                source_x = min(source_width - 1, int(x * source_width / width))
+                pixels.extend(self.spectrogram_palette[int(row[source_x])])
+
+        header = f"P6\n{width} {height}\n255\n".encode("ascii")
+        self.spectrogram_photo = tk.PhotoImage(data=header + pixels, format="PPM")
+        self.spectrogram_photo_cache_key = cache_key
+        return self.spectrogram_photo
+
+    def draw_spectrogram_placeholder(self, canvas, left, top, width, height):
+        canvas.create_rectangle(left, top, left + width, top + height, fill="#060912", outline="")
+        for x in range(0, width, 3):
+            shimmer = ((x * 7) % 37) / 36.0
+            low_band = int(height * (0.50 + shimmer * 0.22))
+            mid_band = int(height * (0.25 + shimmer * 0.18))
+            color = "#13233f" if self.spectrogram_loading else "#101827"
+            canvas.create_line(left + x, top + low_band, left + x, top + height, fill=color)
+            if x % 9 == 0:
+                canvas.create_line(left + x, top + mid_band, left + x, top + low_band, fill="#0b1730")
+
+    def draw_spectrogram_axes(self, canvas, left, top, width, height, max_frequency, duration):
+        grid_color = "#1b2635"
+        label_color = "#d6deeb"
+        muted_color = "#8d99aa"
+
+        frequency_ticks = [0, max_frequency * 0.25, max_frequency * 0.50, max_frequency * 0.75, max_frequency]
+        for frequency in frequency_ticks:
+            ratio = frequency / max(max_frequency, 1.0)
+            y = top + height - (ratio * height)
+            label_y = min(max(y, top + 7), top + height - 7)
+            canvas.create_line(left, y, left + width, y, fill=grid_color)
+            canvas.create_text(
+                left - 8,
+                label_y,
+                text=self.format_frequency_label(frequency),
+                anchor="e",
+                fill=label_color,
+                font=("Helvetica Neue", 10),
+            )
 
         center_y = height / 2
         canvas.create_line(0, center_y, width, center_y, fill=self.waveform_axis_color)
 
-        peaks = self.waveform_peaks
-        if not peaks:
-            peaks = self.placeholder_waveform_peaks(width)
+        center_y = top + plot_height / 2
+        canvas.create_line(left, center_y, left + plot_width, center_y, fill="#f1f1f1", width=1)
 
+        peaks = self.transient_peaks or self.placeholder_transient_peaks(plot_width)
         duration = self.player.duration() if self.current_song_id else 0.0
         progress_ratio = 0.0
         if duration > 0:
@@ -2756,14 +2990,31 @@ class AudioPlayerApp:
         active_color = self.accent
 
         for index, peak in enumerate(peaks):
-            x_center = (index + 0.5) * width / count
-            x0 = max(1, x_center - bar_width / 2)
-            x1 = min(width - 1, x_center + bar_width / 2)
-            amplitude = max(0.08, min(1.0, peak)) * (height * 0.38)
-            y0 = center_y - amplitude
-            y1 = center_y + amplitude
-            color = active_color if ((index + 0.5) / count) <= progress_ratio else empty_color
-            canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+            ratio = (index + 0.5) / count
+            x = left + ratio * plot_width
+            amplitude = max(0.015, min(1.0, float(peak)))
+            played = ratio <= progress_ratio
+            upper_color = "#ffb000" if played else "#0b6dff"
+            lower_color = "#c57400" if played else "#0050d8"
+            highlight_color = "#f8f8f8" if played else "#d8edff"
+
+            top_y = center_y - amplitude * upper_scale
+            bottom_y = center_y + amplitude * lower_scale
+            canvas.create_line(x, center_y, x, top_y, fill=upper_color, width=line_width)
+            canvas.create_line(x, center_y, x, bottom_y, fill=lower_color, width=line_width)
+
+            if amplitude > 0.18 and index % 2 == 0:
+                ridge = max(1.0, amplitude * 5.0)
+                canvas.create_line(x, center_y - ridge, x, center_y + ridge, fill=highlight_color, width=1)
+
+        if self.transient_loading:
+            canvas.create_text(
+                left + plot_width / 2,
+                top + plot_height / 2,
+                text="Analyzing transients...",
+                fill="#d8d8d8",
+                font=("Helvetica Neue", 12, "bold"),
+            )
 
         if duration > 0:
             cursor_x = progress_ratio * width
@@ -2773,9 +3024,9 @@ class AudioPlayerApp:
         count = max(36, min(140, width // 7))
         peaks = []
         for index in range(count):
-            low_pulse = 0.12 + 0.10 * (index % 5) / 4
-            high_pulse = 0.12 * ((index * 7) % 11) / 10
-            peaks.append(low_pulse + high_pulse)
+            pulse = 0.08 + 0.10 * ((index * 5) % 13) / 12
+            accent = 0.32 if index % 47 in (0, 1, 2) else 0.0
+            peaks.append(min(1.0, pulse + accent))
         return peaks
 
     def update_progress_from_event(self, event):
@@ -2786,12 +3037,19 @@ class AudioPlayerApp:
         if duration <= 0:
             return
 
-        width = max(1, self.waveform_canvas.winfo_width())
-        ratio = min(1.0, max(0.0, event.x / width))
+        canvas = event.widget
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        if canvas == getattr(self, "transient_canvas", None):
+            left, _top, plot_width, _plot_height = self.transient_plot_bounds(width, height)
+        else:
+            left, _top, plot_width, _plot_height, _show_axes, _show_legend = self.spectrogram_plot_bounds(width, height)
+
+        ratio = min(1.0, max(0.0, (event.x - left) / plot_width))
         target_time = duration * ratio
         self.progress_var.set(target_time)
         self.time_label_var.set(f"{format_seconds(target_time)} / {format_seconds(duration)}")
-        self.draw_waveform()
+        self.draw_current_analyzer()
 
     def on_progress_press(self, event):
         if self.current_song_id is None:
