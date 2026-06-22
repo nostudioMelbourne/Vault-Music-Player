@@ -13,6 +13,7 @@ class AppPaths:
     songs_dir: Path
     library_db: Path
     playlist_db: Path
+    settings_db: Path
     legacy_songs_dir: Path
     legacy_playlists_dir: Path
     icon_candidates: tuple[Path, ...]
@@ -29,6 +30,7 @@ def build_paths():
         songs_dir=app_support_dir / "songs",
         library_db=app_support_dir / "library.json",
         playlist_db=app_support_dir / "playlists.json",
+        settings_db=app_support_dir / "settings.json",
         legacy_songs_dir=script_dir / "songs",
         legacy_playlists_dir=script_dir / "playlists",
         icon_candidates=(
