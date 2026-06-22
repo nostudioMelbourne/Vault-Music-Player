@@ -25,10 +25,38 @@ class SpectrumAnalysis:
         return self.frames[min(index, len(self.frames) - 1)]
 
 
+class SpectrogramData:
+    def __init__(self, values, max_frequency, db_range):
+        self.values = values
+        self.max_frequency = max_frequency
+        self.db_range = db_range
+
+
 def build_spectrum_analysis(path, band_count=30, frames_per_second=12, max_frames=7200):
     if np is None:
         return None
 
+    return _with_wav(path, lambda wav_path: _read_spectrum_analysis(wav_path, band_count, frames_per_second, max_frames))
+
+
+def build_spectrogram(path, target_columns=560, target_bins=128):
+    if np is None:
+        return None
+
+    def reader(wav_path):
+        sample_rate, samples = _read_mono_samples(wav_path)
+        values, max_frequency, db_range = _build_intensity_grid(
+            sample_rate,
+            samples,
+            target_columns,
+            target_bins,
+        )
+        return SpectrogramData(values, max_frequency, db_range)
+
+    return _with_wav(path, reader)
+
+
+def _with_wav(path, reader):
     source_path = Path(path)
     wav_path = source_path
     temporary_path = None
@@ -55,11 +83,12 @@ def build_spectrum_analysis(path, band_count=30, frames_per_second=12, max_frame
             )
             wav_path = temporary_path
         except (OSError, subprocess.CalledProcessError):
-            temporary_path.unlink(missing_ok=True)
+            if temporary_path.exists():
+                temporary_path.unlink(missing_ok=True)
             return None
 
     try:
-        return _read_spectrum_analysis(wav_path, band_count, frames_per_second, max_frames)
+        return reader(wav_path)
     except (OSError, EOFError, ValueError, wave.Error):
         return None
     finally:
@@ -148,6 +177,22 @@ def _build_band_slices(fft_frequencies, band_edges):
     return slices
 
 
+def _read_mono_samples(path):
+    with wave.open(str(path), "rb") as audio:
+        sample_rate = audio.getframerate()
+        channel_count = max(1, audio.getnchannels())
+        sample_width = audio.getsampwidth()
+        frame_count = audio.getnframes()
+
+        if sample_rate <= 0 or frame_count <= 0 or sample_width not in (1, 2, 3, 4):
+            raise ValueError("Unsupported or empty audio file.")
+
+        data = audio.readframes(frame_count)
+
+    samples = _decode_mono_pcm(data, sample_width, channel_count)
+    return sample_rate, samples.astype(np.float32, copy=False)
+
+
 def _decode_mono_pcm(data, sample_width, channel_count):
     samples = _decode_pcm(data, sample_width)
     if channel_count > 1:
@@ -173,3 +218,55 @@ def _decode_pcm(data, sample_width):
         return values.astype(np.float32) / 8388608.0
 
     return np.frombuffer(data, dtype="<i4").astype(np.float32) / 2147483648.0
+
+
+def _build_intensity_grid(sample_rate, samples, target_columns, target_bins):
+    target_columns = max(64, int(target_columns or 64))
+    target_bins = max(32, int(target_bins or 32))
+    max_frequency = min(20000.0, sample_rate / 2.0)
+
+    samples = samples - float(samples.mean())
+    peak = float(np.max(np.abs(samples), initial=0.0))
+    if peak <= 0.0001:
+        raise ValueError("Silent audio file.")
+    samples = samples / peak
+
+    frame_length = _analysis_frame_length(sample_rate, samples.size)
+    if samples.size < frame_length:
+        samples = np.pad(samples, (0, frame_length - samples.size))
+
+    latest_start = max(0, samples.size - frame_length)
+    starts = np.linspace(0, latest_start, target_columns, dtype=np.int64)
+    window = np.hanning(frame_length).astype(np.float32)
+    frequency_axis = np.fft.rfftfreq(frame_length, d=1.0 / sample_rate)
+    display_frequencies = np.linspace(0, max_frequency, target_bins)
+
+    intensity = np.empty((target_columns, target_bins), dtype=np.float32)
+    for column, start in enumerate(starts):
+        frame = samples[start : start + frame_length]
+        spectrum = np.abs(np.fft.rfft(frame * window))
+        intensity[column] = np.interp(display_frequencies, frequency_axis, spectrum)
+
+    power = 20.0 * np.log10(intensity + 1e-6)
+    power += np.linspace(0.0, 18.0, target_bins, dtype=np.float32)
+
+    ceiling = float(np.percentile(power, 99.4))
+    floor = max(float(np.percentile(power, 6.0)), ceiling - 88.0)
+    if ceiling - floor <= 1.0:
+        raise ValueError("Insufficient spectral range.")
+
+    normalized = np.clip((power - floor) / (ceiling - floor), 0.0, 1.0)
+    normalized = np.power(normalized, 0.72)
+
+    return (normalized.T * 255.0).astype(np.uint8), max_frequency, ceiling - floor
+
+
+def _analysis_frame_length(sample_rate, sample_count):
+    target = max(2048, int(sample_rate * 0.08))
+    frame_length = 1 << int(np.ceil(np.log2(target)))
+    frame_length = max(1024, min(8192, frame_length))
+
+    while sample_count > 0 and frame_length > sample_count and frame_length > 1024:
+        frame_length //= 2
+
+    return max(512, frame_length)

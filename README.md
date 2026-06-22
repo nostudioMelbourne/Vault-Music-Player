@@ -1,13 +1,13 @@
 # Vault Music
 
-Vault Music is a small macOS desktop music-library app for local audio files. It imports songs, groups albums, manages playlists, shows waveform progress and a synchronized spectral analyser, estimates BPM when NumPy is available, and exports playlists as portable bundles.
+Vault Music is a small macOS desktop music-library app for local audio files. It imports songs, groups albums, manages playlists, shows switchable spectrogram/transient progress, estimates BPM when NumPy is available, and exports playlists as portable bundles.
 
 ## Requirements
 
 - macOS
 - Python 3.13 or later
 - Tkinter support in the Python build
-- `afconvert`, included with macOS, for waveform/BPM analysis of non-WAV files
+- `afconvert`, included with macOS, for analyzer/BPM processing of non-WAV files
 
 ## Setup
 
