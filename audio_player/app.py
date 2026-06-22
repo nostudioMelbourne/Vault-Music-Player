@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 import threading
@@ -7,9 +8,8 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 if __package__ in (None, ""):
-    package_dir = Path(__file__).resolve().parent
-    sys.path.insert(0, str(package_dir.parent))
-    __package__ = package_dir.name
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "audio_player"
 
 from .bpm import analyze_bpm
 from .config import build_paths
@@ -18,6 +18,44 @@ from .playback import NSSoundBackend
 from .spectral import build_spectrogram
 from .utils import describe_song, format_seconds, sanitize_name
 from .waveform import build_waveform_peaks
+
+
+THEMES = {
+    "light": {
+        "shell_bg": "#edf1f5",
+        "card_bg": "#ffffff",
+        "border_color": "#d7dee7",
+        "text_color": "#18212f",
+        "muted_color": "#607085",
+        "selection_bg": "#d8e6ff",
+        "heading_bg": "#f5f7fa",
+        "button_bg": "#f8fafc",
+        "menu_active_bg": "#eef4ff",
+        "accent": "#2f6fed",
+        "accent_dark": "#2459bd",
+        "waveform_axis": "#eef2f7",
+        "waveform_empty": "#d8e0eb",
+        "waveform_loading": "#e8edf4",
+        "waveform_cursor": "#2459bd",
+    },
+    "dark": {
+        "shell_bg": "#111722",
+        "card_bg": "#182231",
+        "border_color": "#2c3849",
+        "text_color": "#e8eef7",
+        "muted_color": "#9aa9bc",
+        "selection_bg": "#304b78",
+        "heading_bg": "#202b3a",
+        "button_bg": "#243044",
+        "menu_active_bg": "#2b4268",
+        "accent": "#6b9dff",
+        "accent_dark": "#4a7fe0",
+        "waveform_axis": "#2a3545",
+        "waveform_empty": "#3a485c",
+        "waveform_loading": "#313d4f",
+        "waveform_cursor": "#8eb3ff",
+    },
+}
 
 
 class AudioPlayerApp:
@@ -31,6 +69,8 @@ class AudioPlayerApp:
         self.library = LibraryManager(self.paths)
         self.player = NSSoundBackend()
         self.app_icon_image = None
+        self.styled_menus = []
+        self.theme_mode = self.load_theme_mode()
 
         self.all_playlist_names = []
         self.playlist_names = []
@@ -67,6 +107,7 @@ class AudioPlayerApp:
 
         self.progress_var = tk.DoubleVar(value=0.0)
         self.time_label_var = tk.StringVar(value="0:00 / 0:00")
+        self.dark_mode_var = tk.BooleanVar(value=self.theme_mode == "dark")
 
         self.drag_origin = None
         self.drag_payload = None
@@ -94,6 +135,7 @@ class AudioPlayerApp:
         self.header_frame = ttk.Frame(self.container, style="Shell.TFrame")
         self.header_frame.pack(fill=tk.X, pady=(0, 10))
         self.header_frame.columnconfigure(0, weight=1)
+        self.header_frame.columnconfigure(1, weight=0)
 
         ttk.Label(self.header_frame, text="Vault Music", style="Title.TLabel").grid(row=0, column=0, sticky="w")
         self.header_subtitle = ttk.Label(
@@ -102,6 +144,14 @@ class AudioPlayerApp:
             style="Hint.TLabel",
         )
         self.header_subtitle.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.dark_mode_toggle = ttk.Checkbutton(
+            self.header_frame,
+            text="Dark Mode",
+            variable=self.dark_mode_var,
+            command=self.toggle_dark_mode,
+            style="ThemeToggle.TCheckbutton",
+        )
+        self.dark_mode_toggle.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
 
         self.controls_card = ttk.Frame(self.container, padding=12, style="Card.TFrame")
         self.controls_card.pack(fill=tk.X)
@@ -228,14 +278,22 @@ class AudioPlayerApp:
         except tk.TclError:
             pass
 
-        self.shell_bg = "#edf1f5"
-        self.card_bg = "#ffffff"
-        self.border_color = "#d7dee7"
-        self.text_color = "#18212f"
-        self.muted_color = "#607085"
-        self.selection_bg = "#d8e6ff"
-        accent = "#2f6fed"
-        accent_dark = "#2459bd"
+        palette = THEMES.get(self.theme_mode, THEMES["light"])
+        self.shell_bg = palette["shell_bg"]
+        self.card_bg = palette["card_bg"]
+        self.border_color = palette["border_color"]
+        self.text_color = palette["text_color"]
+        self.muted_color = palette["muted_color"]
+        self.selection_bg = palette["selection_bg"]
+        self.heading_bg = palette["heading_bg"]
+        self.button_bg = palette["button_bg"]
+        self.menu_active_bg = palette["menu_active_bg"]
+        self.accent = palette["accent"]
+        self.accent_dark = palette["accent_dark"]
+        self.waveform_axis_color = palette["waveform_axis"]
+        self.waveform_empty_color = palette["waveform_empty"]
+        self.waveform_loading_color = palette["waveform_loading"]
+        self.waveform_cursor_color = palette["waveform_cursor"]
 
         self.root.configure(background=self.shell_bg)
 
@@ -255,25 +313,130 @@ class AudioPlayerApp:
         style.configure("Status.TLabel", background=self.shell_bg, foreground=self.muted_color, font=("Helvetica Neue", 11))
         style.configure("Panel.TLabelframe", background=self.shell_bg, borderwidth=1, relief="solid")
         style.configure("Panel.TLabelframe.Label", background=self.shell_bg, foreground=self.text_color, font=("Helvetica Neue", 11, "bold"))
-        style.configure("Action.TButton", padding=(7, 4))
-        style.configure("Action.TMenubutton", padding=(7, 4))
-        style.configure("Treeview", background=self.card_bg, fieldbackground=self.card_bg, bordercolor=self.border_color, rowheight=26)
-        style.configure("Treeview.Heading", background="#f5f7fa", foreground=self.text_color, relief="flat", padding=(8, 7))
+        style.configure("ThemeToggle.TCheckbutton", background=self.shell_bg, foreground=self.text_color, padding=(8, 4))
+        style.configure("Action.TButton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("Action.TMenubutton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("TEntry", fieldbackground=self.card_bg, foreground=self.text_color, insertcolor=self.text_color)
+        style.configure("TNotebook", background=self.shell_bg, borderwidth=0)
+        style.configure("TNotebook.Tab", background=self.button_bg, foreground=self.muted_color, padding=(12, 7))
+        style.configure(
+            "Treeview",
+            background=self.card_bg,
+            fieldbackground=self.card_bg,
+            foreground=self.text_color,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            rowheight=26,
+        )
+        style.configure("Treeview.Heading", background=self.heading_bg, foreground=self.text_color, relief="flat", padding=(8, 7))
         style.map("Treeview", background=[("selected", self.selection_bg)], foreground=[("selected", self.text_color)])
         style.map(
+            "ThemeToggle.TCheckbutton",
+            background=[("active", self.shell_bg), ("selected", self.shell_bg)],
+            foreground=[("active", self.text_color), ("selected", self.text_color)],
+            indicatorcolor=[("selected", self.accent), ("!selected", self.card_bg)],
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", self.card_bg), ("active", self.menu_active_bg)],
+            foreground=[("selected", self.text_color), ("active", self.text_color)],
+        )
+        style.map(
+            "TEntry",
+            fieldbackground=[("readonly", self.card_bg), ("disabled", self.card_bg)],
+            foreground=[("disabled", self.muted_color)],
+        )
+        style.map(
             "Action.TButton",
-            background=[("active", accent), ("pressed", accent_dark)],
+            background=[("active", self.accent), ("pressed", self.accent_dark)],
             foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
         )
         style.map(
             "Action.TMenubutton",
-            background=[("active", "#eef4ff")],
+            background=[("active", self.menu_active_bg), ("pressed", self.menu_active_bg)],
             foreground=[("active", self.text_color)],
         )
+        self.apply_theme_to_tk_widgets()
+
+    def apply_theme_to_tk_widgets(self):
+        for panedwindow_name in ("content", "albums_content", "playlist_pane"):
+            panedwindow = getattr(self, panedwindow_name, None)
+            if panedwindow is not None:
+                panedwindow.configure(background=self.border_color)
+
+        waveform_canvas = getattr(self, "waveform_canvas", None)
+        if waveform_canvas is not None:
+            waveform_canvas.configure(background=self.card_bg, highlightbackground=self.border_color)
+
+        playlist_list = getattr(self, "playlist_list", None)
+        if playlist_list is not None:
+            playlist_list.configure(
+                background=self.card_bg,
+                foreground=self.text_color,
+                selectbackground=self.selection_bg,
+                selectforeground=self.text_color,
+            )
+
+        for menu in self.styled_menus:
+            self.configure_menu(menu)
+
+        self.draw_waveform()
+
+    def configure_menu(self, menu):
+        menu.configure(
+            background=self.card_bg,
+            foreground=self.text_color,
+            activebackground=self.menu_active_bg,
+            activeforeground=self.text_color,
+            borderwidth=0,
+            relief=tk.FLAT,
+        )
+
+    def create_menu(self, parent, track=False):
+        menu = tk.Menu(parent, tearoff=False)
+        self.configure_menu(menu)
+        if track:
+            self.styled_menus.append(menu)
+        return menu
+
+    def load_theme_mode(self):
+        try:
+            with open(self.paths.settings_db, "r", encoding="utf-8") as file:
+                settings = json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return "light"
+
+        theme = settings.get("theme") if isinstance(settings, dict) else None
+        return theme if theme in THEMES else "light"
+
+    def save_theme_mode(self):
+        settings = {}
+        try:
+            if self.paths.settings_db.exists():
+                with open(self.paths.settings_db, "r", encoding="utf-8") as file:
+                    loaded_settings = json.load(file)
+                if isinstance(loaded_settings, dict):
+                    settings = loaded_settings
+        except (OSError, json.JSONDecodeError):
+            settings = {}
+
+        try:
+            self.paths.app_support_dir.mkdir(parents=True, exist_ok=True)
+            settings["theme"] = self.theme_mode
+            with open(self.paths.settings_db, "w", encoding="utf-8") as file:
+                json.dump(settings, file, indent=2)
+        except OSError:
+            pass
+
+    def toggle_dark_mode(self):
+        self.theme_mode = "dark" if self.dark_mode_var.get() else "light"
+        self.save_theme_mode()
+        self.configure_theme()
 
     def create_menu_button(self, parent, text, items):
         button = ttk.Menubutton(parent, text=text, style="Action.TMenubutton", direction="below")
-        menu = tk.Menu(button)
+        menu = self.create_menu(button, track=True)
         for item in items:
             if item == "separator":
                 menu.add_separator()
@@ -1762,9 +1925,9 @@ class AudioPlayerApp:
             dialog,
             text="TAP",
             command=lambda: register_tap(),
-            bg="#2f6fed",
+            bg=self.accent,
             fg="#ffffff",
-            activebackground="#2459bd",
+            activebackground=self.accent_dark,
             activeforeground="#ffffff",
             relief=tk.FLAT,
             bd=0,
@@ -2129,7 +2292,7 @@ class AudioPlayerApp:
 
     def show_library_context_menu(self, event):
         item_id = self.select_tree_item_for_event(self.library_tree, event)
-        menu = tk.Menu(self.root, tearoff=False)
+        menu = self.create_menu(self.root)
 
         if item_id is None:
             menu.add_command(label="Import Songs", command=self.add_songs)
@@ -2157,7 +2320,7 @@ class AudioPlayerApp:
 
     def show_album_context_menu(self, event):
         item_id = self.select_tree_item_for_event(self.album_tree, event, browse=True)
-        menu = tk.Menu(self.root, tearoff=False)
+        menu = self.create_menu(self.root)
 
         if item_id is None:
             menu.add_command(label="Import Album", command=self.import_album)
@@ -2179,7 +2342,7 @@ class AudioPlayerApp:
             return
 
         selected_ids = self.get_selected_album_song_ids()
-        menu = tk.Menu(self.root, tearoff=False)
+        menu = self.create_menu(self.root)
         menu.add_command(label="Play", command=self.play_selected_album_song)
         menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids(selected_ids))
         menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids(selected_ids))
@@ -2200,7 +2363,7 @@ class AudioPlayerApp:
 
     def show_playlist_list_context_menu(self, event):
         playlist_name = self.select_playlist_at_event(event)
-        menu = tk.Menu(self.root, tearoff=False)
+        menu = self.create_menu(self.root)
         menu.add_command(label="New Playlist", command=self.create_playlist)
 
         if playlist_name is not None:
@@ -2216,7 +2379,7 @@ class AudioPlayerApp:
         if item_id is None:
             return
 
-        menu = tk.Menu(self.root, tearoff=False)
+        menu = self.create_menu(self.root)
         menu.add_command(label="Play", command=self.play_selected_playlist_song)
         menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids([item_id]))
         menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids([item_id]))
@@ -2808,59 +2971,8 @@ class AudioPlayerApp:
                 font=("Helvetica Neue", 10),
             )
 
-        if duration > 0:
-            for seconds in (0, duration / 3, duration * 2 / 3, duration):
-                x = left + (seconds / duration) * width
-                if seconds <= 0:
-                    label_anchor = "nw"
-                elif seconds >= duration:
-                    label_anchor = "ne"
-                else:
-                    label_anchor = "n"
-                canvas.create_line(x, top, x, top + height, fill=grid_color)
-                canvas.create_text(
-                    x,
-                    top + height + 14,
-                    text=format_seconds(seconds),
-                    anchor=label_anchor,
-                    fill=muted_color,
-                    font=("Helvetica Neue", 10),
-                )
-
-        canvas.create_rectangle(left, top, left + width, top + height, outline="#d6deeb")
-
-    def draw_spectrogram_legend(self, canvas, x, top, height):
-        legend_width = 9
-        for y in range(height):
-            ratio = 1.0 - (y / max(1, height - 1))
-            color = self.spectrogram_color_hex(int(ratio * 255))
-            canvas.create_line(x, top + y, x + legend_width, top + y, fill=color)
-
-        label_x = x + legend_width + 7
-        canvas.create_text(label_x, top, text="0 dB", anchor="nw", fill="#d6deeb", font=("Helvetica Neue", 9))
-        canvas.create_text(label_x, top + height * 0.47, text="-40 dB", anchor="w", fill="#d6deeb", font=("Helvetica Neue", 9))
-        canvas.create_text(label_x, top + height, text="-80 dB", anchor="sw", fill="#d6deeb", font=("Helvetica Neue", 9))
-
-    def spectrogram_color_hex(self, intensity):
-        color = self.spectrogram_palette[max(0, min(255, int(intensity)))]
-        return f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
-
-    def format_frequency_label(self, frequency):
-        if frequency >= 1000:
-            return f"{frequency / 1000:.0f} kHz"
-        return "0 kHz"
-
-    def draw_transient(self):
-        canvas = getattr(self, "transient_canvas", None)
-        if canvas is None:
-            return
-
-        width = max(1, canvas.winfo_width())
-        height = max(1, canvas.winfo_height())
-        left, top, plot_width, plot_height = self.transient_plot_bounds(width, height)
-        canvas.delete("all")
-        canvas.create_rectangle(0, 0, width, height, fill="#050505", outline="")
-        canvas.create_rectangle(left, top, left + plot_width, top + plot_height, fill="#050505", outline="#2a2a2a")
+        center_y = height / 2
+        canvas.create_line(0, center_y, width, center_y, fill=self.waveform_axis_color)
 
         center_y = top + plot_height / 2
         canvas.create_line(left, center_y, left + plot_width, center_y, fill="#f1f1f1", width=1)
@@ -2871,11 +2983,11 @@ class AudioPlayerApp:
         if duration > 0:
             progress_ratio = min(1.0, max(0.0, self.progress_var.get() / duration))
 
-        count = max(1, len(peaks))
-        slot_width = plot_width / count
-        line_width = max(1, int(slot_width))
-        upper_scale = plot_height * 0.46
-        lower_scale = plot_height * 0.39
+        count = len(peaks)
+        bar_gap = 2
+        bar_width = max(2, min(5, int(width / max(count, 1)) - bar_gap))
+        empty_color = self.waveform_empty_color if not self.waveform_loading else self.waveform_loading_color
+        active_color = self.accent
 
         for index, peak in enumerate(peaks):
             ratio = (index + 0.5) / count
@@ -2905,18 +3017,11 @@ class AudioPlayerApp:
             )
 
         if duration > 0:
-            cursor_x = left + progress_ratio * plot_width
-            canvas.create_line(cursor_x, top, cursor_x, top + plot_height, fill="#ff1630", width=2)
+            cursor_x = progress_ratio * width
+            canvas.create_line(cursor_x, 8, cursor_x, height - 8, fill=self.waveform_cursor_color, width=2)
 
-    def transient_plot_bounds(self, width, height):
-        left = 8
-        right = 8
-        top = 12
-        bottom = 12
-        return left, top, max(1, width - left - right), max(1, height - top - bottom)
-
-    def placeholder_transient_peaks(self, width):
-        count = max(80, min(420, int(width // 3)))
+    def placeholder_waveform_peaks(self, width):
+        count = max(36, min(140, width // 7))
         peaks = []
         for index in range(count):
             pulse = 0.08 + 0.10 * ((index * 5) % 13) / 12

@@ -1,7 +1,6 @@
 def main():
-    from .app import main as run_app
+    from .app import main as app_main
 
-    return run_app()
-
+    return app_main()
 
 __all__ = ["main"]
