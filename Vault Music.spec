@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    tkinterdnd_datas = collect_data_files('tkinterdnd2')
+except Exception:
+    tkinterdnd_datas = []
+
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=tkinterdnd_datas,
+    hiddenimports=['tkinterdnd2'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
