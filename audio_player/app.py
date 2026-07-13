@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import zlib
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 from urllib.parse import unquote, urlparse
@@ -95,6 +96,8 @@ class AudioPlayerApp:
         self.analyzer_job_token = 0
         self.spectrogram_photo = None
         self.spectrogram_photo_cache_key = None
+        self.spectrogram_photo_path = None
+        self.spectrogram_error = None
         self.spectrogram_palette = self.build_spectrogram_palette()
         self.bpm_analysis_song_ids = set()
         self.resize_job = None
@@ -358,6 +361,14 @@ class AudioPlayerApp:
         self.waveform_cursor_color = palette["waveform_cursor"]
 
         self.root.configure(background=self.shell_bg)
+        self.root.option_add("*Background", self.shell_bg)
+        self.root.option_add("*Foreground", self.text_color)
+        self.root.option_add("*Entry.Background", self.card_bg)
+        self.root.option_add("*Entry.Foreground", self.text_color)
+        self.root.option_add("*Listbox.Background", self.card_bg)
+        self.root.option_add("*Listbox.Foreground", self.text_color)
+        self.root.option_add("*selectBackground", self.selection_bg)
+        self.root.option_add("*selectForeground", self.text_color)
 
         try:
             tkfont.nametofont("TkDefaultFont").configure(family="Helvetica Neue", size=12)
@@ -367,6 +378,69 @@ class AudioPlayerApp:
             pass
 
         style.configure(".", background=self.shell_bg, foreground=self.text_color)
+        style.configure("TFrame", background=self.shell_bg)
+        style.configure("TLabel", background=self.shell_bg, foreground=self.text_color)
+        style.configure("TButton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("TMenubutton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("TCheckbutton", background=self.shell_bg, foreground=self.text_color)
+        style.configure("TLabelframe", background=self.shell_bg, borderwidth=1, relief="solid")
+        style.configure("TLabelframe.Label", background=self.shell_bg, foreground=self.text_color)
+        style.configure(
+            "TScrollbar",
+            background=self.button_bg,
+            troughcolor=self.shell_bg,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            arrowcolor=self.text_color,
+        )
+        style.configure(
+            "Vertical.TScrollbar",
+            background=self.button_bg,
+            troughcolor=self.shell_bg,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            arrowcolor=self.text_color,
+        )
+        style.configure(
+            "Horizontal.TScrollbar",
+            background=self.button_bg,
+            troughcolor=self.shell_bg,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            arrowcolor=self.text_color,
+        )
+        style.configure("Vault.TFrame", background=self.shell_bg)
+        style.configure("Vault.Card.TFrame", background=self.card_bg)
+        style.configure("Vault.TLabel", background=self.shell_bg, foreground=self.text_color)
+        style.configure("Vault.TButton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("Vault.TMenubutton", padding=(7, 4), background=self.button_bg, foreground=self.text_color)
+        style.configure("Vault.TCheckbutton", background=self.shell_bg, foreground=self.text_color)
+        style.configure("Vault.TEntry", fieldbackground=self.card_bg, foreground=self.text_color, insertcolor=self.text_color)
+        style.configure("Vault.TNotebook", background=self.shell_bg, borderwidth=0)
+        style.configure("Vault.TNotebook.Tab", background=self.button_bg, foreground=self.muted_color, padding=(12, 7))
+        style.configure("Vault.Treeview", background=self.card_bg, fieldbackground=self.card_bg, foreground=self.text_color, rowheight=26)
+        style.configure("Vault.Treeview.Heading", background=self.heading_bg, foreground=self.text_color, relief="flat", padding=(8, 7))
+        style.configure(
+            "Vault.Vertical.TScrollbar",
+            background=self.button_bg,
+            troughcolor=self.shell_bg,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            arrowcolor=self.text_color,
+        )
+        style.configure(
+            "Vault.Horizontal.TScrollbar",
+            background=self.button_bg,
+            troughcolor=self.shell_bg,
+            bordercolor=self.border_color,
+            lightcolor=self.border_color,
+            darkcolor=self.border_color,
+            arrowcolor=self.text_color,
+        )
         style.configure("Shell.TFrame", background=self.shell_bg)
         style.configure("Card.TFrame", background=self.card_bg, relief="flat")
         style.configure("Title.TLabel", background=self.shell_bg, foreground=self.text_color, font=("Helvetica Neue", 18, "bold"))
@@ -403,7 +477,22 @@ class AudioPlayerApp:
             indicatorcolor=[("selected", self.accent), ("!selected", self.card_bg)],
         )
         style.map(
+            "TCheckbutton",
+            background=[("active", self.shell_bg), ("selected", self.shell_bg)],
+            foreground=[("active", self.text_color), ("selected", self.text_color)],
+        )
+        style.map(
+            "Vault.TCheckbutton",
+            background=[("active", self.shell_bg), ("selected", self.shell_bg)],
+            foreground=[("active", self.text_color), ("selected", self.text_color)],
+        )
+        style.map(
             "TNotebook.Tab",
+            background=[("selected", self.card_bg), ("active", self.menu_active_bg)],
+            foreground=[("selected", self.text_color), ("active", self.text_color)],
+        )
+        style.map(
+            "Vault.TNotebook.Tab",
             background=[("selected", self.card_bg), ("active", self.menu_active_bg)],
             foreground=[("selected", self.text_color), ("active", self.text_color)],
         )
@@ -413,9 +502,45 @@ class AudioPlayerApp:
             foreground=[("disabled", self.muted_color)],
         )
         style.map(
+            "Vault.TEntry",
+            fieldbackground=[("readonly", self.card_bg), ("disabled", self.card_bg)],
+            foreground=[("disabled", self.muted_color)],
+        )
+        style.map("Vault.Treeview", background=[("selected", self.selection_bg)], foreground=[("selected", self.text_color)])
+        style.map(
+            "TScrollbar",
+            background=[("active", self.menu_active_bg), ("pressed", self.accent_dark)],
+            arrowcolor=[("active", self.text_color), ("pressed", "#ffffff")],
+        )
+        style.map(
+            "Vault.Vertical.TScrollbar",
+            background=[("active", self.menu_active_bg), ("pressed", self.accent_dark)],
+            arrowcolor=[("active", self.text_color), ("pressed", "#ffffff")],
+        )
+        style.map(
+            "Vault.Horizontal.TScrollbar",
+            background=[("active", self.menu_active_bg), ("pressed", self.accent_dark)],
+            arrowcolor=[("active", self.text_color), ("pressed", "#ffffff")],
+        )
+        style.map(
             "Action.TButton",
             background=[("active", self.accent), ("pressed", self.accent_dark)],
             foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+        )
+        style.map(
+            "TButton",
+            background=[("active", self.accent), ("pressed", self.accent_dark)],
+            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+        )
+        style.map(
+            "Vault.TButton",
+            background=[("active", self.accent), ("pressed", self.accent_dark)],
+            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")],
+        )
+        style.map(
+            "Vault.TMenubutton",
+            background=[("active", self.menu_active_bg), ("pressed", self.menu_active_bg)],
+            foreground=[("active", self.text_color)],
         )
         style.map(
             "Action.TMenubutton",
@@ -425,6 +550,8 @@ class AudioPlayerApp:
         self.apply_theme_to_tk_widgets()
 
     def apply_theme_to_tk_widgets(self):
+        self.apply_theme_to_widget_tree(self.root)
+
         for panedwindow_name in ("body_pane", "content", "albums_content", "playlist_pane"):
             panedwindow = getattr(self, panedwindow_name, None)
             if panedwindow is not None:
@@ -451,6 +578,68 @@ class AudioPlayerApp:
             self.configure_menu(menu)
 
         self.draw_current_analyzer()
+
+    def apply_theme_to_widget_tree(self, widget):
+        widget_class = widget.winfo_class()
+
+        try:
+            if widget_class in {"TFrame", "Frame"}:
+                self.configure_widget_style(widget, "Vault.TFrame")
+            elif widget_class == "TLabel":
+                self.configure_widget_style(widget, "Vault.TLabel")
+            elif widget_class == "TButton":
+                self.configure_widget_style(widget, "Vault.TButton")
+            elif widget_class == "TMenubutton":
+                self.configure_widget_style(widget, "Vault.TMenubutton")
+            elif widget_class == "TCheckbutton":
+                self.configure_widget_style(widget, "Vault.TCheckbutton")
+            elif widget_class == "TNotebook":
+                self.configure_widget_style(widget, "Vault.TNotebook")
+            elif widget_class == "Treeview":
+                self.configure_widget_style(widget, "Vault.Treeview")
+                self.configure_treeview_theme(widget)
+            elif widget_class == "TEntry":
+                self.configure_widget_style(widget, "Vault.TEntry")
+            elif widget_class == "TScrollbar":
+                orient = str(widget.cget("orient"))
+                style_name = "Vault.Horizontal.TScrollbar" if orient == tk.HORIZONTAL else "Vault.Vertical.TScrollbar"
+                self.configure_widget_style(widget, style_name)
+            elif widget_class == "Listbox":
+                widget.configure(
+                    background=self.card_bg,
+                    foreground=self.text_color,
+                    selectbackground=self.selection_bg,
+                    selectforeground=self.text_color,
+                    highlightbackground=self.border_color,
+                    highlightcolor=self.accent,
+                )
+            elif widget_class == "Canvas":
+                widget.configure(highlightbackground=self.border_color, highlightcolor=self.accent)
+        except tk.TclError:
+            pass
+
+        for child in widget.winfo_children():
+            self.apply_theme_to_widget_tree(child)
+
+    def configure_widget_style(self, widget, style_name):
+        try:
+            current_style = widget.cget("style")
+        except tk.TclError:
+            return
+
+        if current_style:
+            return
+
+        widget.configure(style=style_name)
+
+    def configure_treeview_theme(self, tree):
+        tree.tag_configure("theme-row", background=self.card_bg, foreground=self.text_color)
+        for item_id in tree.get_children(""):
+            tree.item(item_id, tags=self.theme_tree_tags(tree.item(item_id, "tags")))
+
+    def theme_tree_tags(self, tags=()):
+        current_tags = [tag for tag in tags if tag != "theme-row"]
+        return ("theme-row", *current_tags)
 
     def configure_menu(self, menu):
         menu.configure(
@@ -1071,7 +1260,7 @@ class AudioPlayerApp:
             self.album_playlist_button,
         ]
 
-        album_tree_frame = ttk.Frame(self.album_list_frame)
+        album_tree_frame = ttk.Frame(self.album_list_frame, style="Card.TFrame")
         album_tree_frame.grid(row=1, column=0, sticky="nsew")
         album_tree_frame.columnconfigure(0, weight=1)
         album_tree_frame.rowconfigure(0, weight=1)
@@ -1149,7 +1338,7 @@ class AudioPlayerApp:
             self.album_song_playlist_button,
         ]
 
-        album_song_tree_frame = ttk.Frame(self.album_song_frame)
+        album_song_tree_frame = ttk.Frame(self.album_song_frame, style="Card.TFrame")
         album_song_tree_frame.grid(row=1, column=0, sticky="nsew")
         album_song_tree_frame.columnconfigure(0, weight=1)
         album_song_tree_frame.rowconfigure(0, weight=1)
@@ -1245,7 +1434,7 @@ class AudioPlayerApp:
             self.playlist_manage_button,
         ]
 
-        playlist_browser_frame = ttk.Frame(self.playlist_list_frame)
+        playlist_browser_frame = ttk.Frame(self.playlist_list_frame, style="Card.TFrame")
         playlist_browser_frame.grid(row=1, column=0, sticky="nsew")
         playlist_browser_frame.columnconfigure(0, weight=1)
         playlist_browser_frame.rowconfigure(0, weight=1)
@@ -1311,7 +1500,7 @@ class AudioPlayerApp:
             self.playlist_song_remove_button,
         ]
 
-        playlist_song_tree_frame = ttk.Frame(self.playlist_song_frame)
+        playlist_song_tree_frame = ttk.Frame(self.playlist_song_frame, style="Card.TFrame")
         playlist_song_tree_frame.grid(row=1, column=0, sticky="nsew")
         playlist_song_tree_frame.columnconfigure(0, weight=1)
         playlist_song_tree_frame.rowconfigure(0, weight=1)
@@ -2062,6 +2251,7 @@ class AudioPlayerApp:
                 tk.END,
                 iid=song.id,
                 values=self.song_tree_values(self.library_tree, song),
+                tags=self.theme_tree_tags(),
             )
 
         existing_selection = [song_id for song_id in selected_song_ids if self.library_tree.exists(song_id)]
@@ -2107,6 +2297,7 @@ class AudioPlayerApp:
                 tk.END,
                 iid=item_id,
                 values=(summary.title, summary.artist_label, summary.song_count),
+                tags=self.theme_tree_tags(),
             )
 
         self.album_list_frame.configure(text=f"Albums ({len(visible_summaries)}/{len(all_summaries)})")
@@ -2179,6 +2370,7 @@ class AudioPlayerApp:
                 tk.END,
                 iid=song.id,
                 values=self.song_tree_values(self.album_song_tree, song),
+                tags=self.theme_tree_tags(),
             )
 
         existing_selection = [song_id for song_id in selected_song_ids if self.album_song_tree.exists(song_id)]
@@ -2261,6 +2453,7 @@ class AudioPlayerApp:
                 tk.END,
                 iid=song.id,
                 values=self.song_tree_values(self.playlist_tree, song),
+                tags=self.theme_tree_tags(),
             )
 
         if selected_song_id and self.playlist_tree.exists(selected_song_id):
@@ -3321,6 +3514,7 @@ class AudioPlayerApp:
             self.time_label_var.set("0:00 / 0:00")
             self.spectrogram_data = None
             self.spectrogram_loading = False
+            self.spectrogram_error = None
             self.transient_peaks = []
             self.transient_loading = False
             self.invalidate_spectrogram_photo()
@@ -3342,6 +3536,7 @@ class AudioPlayerApp:
         token = self.analyzer_job_token
         self.spectrogram_data = None
         self.spectrogram_loading = True
+        self.spectrogram_error = None
         self.transient_peaks = []
         self.transient_loading = True
         self.invalidate_spectrogram_photo()
@@ -3360,11 +3555,21 @@ class AudioPlayerApp:
 
             try:
                 spectrogram = build_spectrogram(path)
-            except Exception:
+                spectrogram_error = None if spectrogram is not None else "Spectrum unavailable for this track."
+            except Exception as exc:
                 spectrogram = None
+                spectrogram_error = f"Spectrum analysis failed: {exc}"
 
             try:
-                self.root.after(0, lambda: self.apply_spectrogram(token, song_id, spectrogram))
+                self.root.after(
+                    0,
+                    lambda spectrogram=spectrogram, spectrogram_error=spectrogram_error: self.apply_spectrogram(
+                        token,
+                        song_id,
+                        spectrogram,
+                        spectrogram_error,
+                    ),
+                )
             except RuntimeError:
                 pass
 
@@ -3379,11 +3584,12 @@ class AudioPlayerApp:
         if self.current_analyzer_mode() == "transient":
             self.draw_transient()
 
-    def apply_spectrogram(self, token, song_id, spectrogram):
+    def apply_spectrogram(self, token, song_id, spectrogram, error=None):
         if token != self.analyzer_job_token or song_id != self.current_song_id:
             return
 
         self.spectrogram_data = spectrogram
+        self.spectrogram_error = error
         self.spectrogram_loading = False
         self.invalidate_spectrogram_photo()
         if self.current_analyzer_mode() == "spectrogram":
@@ -3422,6 +3628,7 @@ class AudioPlayerApp:
     def invalidate_spectrogram_photo(self):
         self.spectrogram_photo = None
         self.spectrogram_photo_cache_key = None
+        self.spectrogram_photo_path = None
 
     def current_analyzer_mode(self):
         notebook = getattr(self, "analyzer_notebook", None)
@@ -3463,9 +3670,16 @@ class AudioPlayerApp:
         canvas.create_rectangle(0, 0, width, height, fill="#05070b", outline="")
 
         if self.spectrogram_data is not None:
-            photo = self.render_spectrogram_photo(self.spectrogram_data, plot_width, plot_height)
-            canvas.create_image(left, top, image=photo, anchor="nw")
+            try:
+                photo = self.render_spectrogram_photo(self.spectrogram_data, plot_width, plot_height)
+                canvas.create_image(left, top, image=photo, anchor="nw")
+                canvas.spectrogram_photo = photo
+            except (OSError, tk.TclError, ValueError) as exc:
+                self.spectrogram_error = f"Could not render spectrum image: {exc}"
+                canvas.spectrogram_photo = None
+                self.draw_spectrogram_placeholder(canvas, left, top, plot_width, plot_height)
         else:
+            canvas.spectrogram_photo = None
             self.draw_spectrogram_placeholder(canvas, left, top, plot_width, plot_height)
 
         duration = self.player.duration() if self.current_song_id else 0.0
@@ -3490,6 +3704,15 @@ class AudioPlayerApp:
                 fill="#d6deeb",
                 font=("Helvetica Neue", 12, "bold"),
             )
+        elif self.spectrogram_error:
+            canvas.create_text(
+                left + plot_width / 2,
+                top + plot_height / 2,
+                text=self.spectrogram_error,
+                fill="#d6deeb",
+                font=("Helvetica Neue", 12, "bold"),
+                width=max(220, plot_width - 24),
+            )
 
         if duration > 0:
             cursor_x = left + (progress_ratio * plot_width)
@@ -3513,19 +3736,44 @@ class AudioPlayerApp:
         if self.spectrogram_photo is not None and self.spectrogram_photo_cache_key == cache_key:
             return self.spectrogram_photo
 
+        image_path = self.write_spectrogram_png(values, width, height)
+        self.spectrogram_photo = tk.PhotoImage(master=self.root, file=str(image_path))
+        self.spectrogram_photo_cache_key = cache_key
+        self.spectrogram_photo_path = image_path
+        return self.spectrogram_photo
+
+    def write_spectrogram_png(self, values, width, height):
+        cache_dir = self.paths.app_support_dir / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        song_key = self.current_song_id or "current"
+        image_path = cache_dir / f"spectrogram-{song_key}-{width}x{height}.png"
+        temporary_path = image_path.with_suffix(".tmp")
+
         source_height, source_width = values.shape
-        pixels = bytearray()
+        raw = bytearray()
         for y in range(height):
             source_y = source_height - 1 - min(source_height - 1, int(y * source_height / height))
             row = values[source_y]
+            raw.append(0)
             for x in range(width):
                 source_x = min(source_width - 1, int(x * source_width / width))
-                pixels.extend(self.spectrogram_palette[int(row[source_x])])
+                raw.extend(self.spectrogram_palette[int(row[source_x])])
 
-        header = f"P6\n{width} {height}\n255\n".encode("ascii")
-        self.spectrogram_photo = tk.PhotoImage(data=header + pixels, format="PPM")
-        self.spectrogram_photo_cache_key = cache_key
-        return self.spectrogram_photo
+        png = bytearray(b"\x89PNG\r\n\x1a\n")
+        png.extend(self.png_chunk(b"IHDR", width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"))
+        png.extend(self.png_chunk(b"IDAT", zlib.compress(bytes(raw), level=6)))
+        png.extend(self.png_chunk(b"IEND", b""))
+
+        with open(temporary_path, "wb") as file:
+            file.write(png)
+        temporary_path.replace(image_path)
+        return image_path
+
+    def png_chunk(self, chunk_type, data):
+        checksum = zlib.crc32(chunk_type)
+        checksum = zlib.crc32(data, checksum) & 0xFFFFFFFF
+        return len(data).to_bytes(4, "big") + chunk_type + data + checksum.to_bytes(4, "big")
 
     def draw_spectrogram_placeholder(self, canvas, left, top, width, height):
         canvas.create_rectangle(left, top, left + width, top + height, fill="#060912", outline="")
@@ -3760,7 +4008,14 @@ class AudioPlayerApp:
 
 
 def main():
-    root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
+    root = None
+    if TkinterDnD is not None:
+        try:
+            root = TkinterDnD.Tk()
+        except RuntimeError:
+            root = tk.Tk()
+    else:
+        root = tk.Tk()
 
     try:
         app = AudioPlayerApp(root)

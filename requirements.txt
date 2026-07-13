@@ -1,4 +1,5 @@
 numpy
 pyobjc-framework-Cocoa
 pyinstaller
+soundfile
 tkinterdnd2

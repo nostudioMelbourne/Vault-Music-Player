@@ -5,6 +5,8 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 
+from .audio_decode import read_mono_samples
+
 try:
     import numpy as np
 except ImportError:
@@ -43,8 +45,12 @@ def build_spectrogram(path, target_columns=560, target_bins=128):
     if np is None:
         return None
 
-    def reader(wav_path):
-        sample_rate, samples = _read_mono_samples(wav_path)
+    decoded = read_mono_samples(path)
+    if decoded is None:
+        return None
+
+    try:
+        sample_rate, samples = decoded
         values, max_frequency, db_range = _build_intensity_grid(
             sample_rate,
             samples,
@@ -52,8 +58,8 @@ def build_spectrogram(path, target_columns=560, target_bins=128):
             target_bins,
         )
         return SpectrogramData(values, max_frequency, db_range)
-
-    return _with_wav(path, reader)
+    except (OSError, EOFError, ValueError, wave.Error):
+        return None
 
 
 def _with_wav(path, reader):
