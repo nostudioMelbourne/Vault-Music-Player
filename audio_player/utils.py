@@ -1,4 +1,7 @@
+import json
+import os
 import re
+import tempfile
 from pathlib import Path
 
 
@@ -33,3 +36,28 @@ def format_seconds(seconds):
         return f"{hours}:{minutes:02d}:{seconds:02d}"
 
     return f"{minutes}:{seconds:02d}"
+
+
+def write_json_atomic(path, payload):
+    path = Path(path)
+    temporary_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as file:
+            temporary_path = Path(file.name)
+            json.dump(payload, file, indent=2)
+            file.flush()
+            os.fsync(file.fileno())
+
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
