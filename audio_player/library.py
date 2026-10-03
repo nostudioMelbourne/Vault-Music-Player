@@ -6,6 +6,7 @@ from uuid import uuid4
 from .config import SUPPORTED_EXTENSIONS
 from .exporter import export_playlist_bundle
 from .models import AlbumSummary, Song
+from .trash import move_to_trash
 from .utils import sanitize_name, unique_path, write_json_atomic
 
 
@@ -300,7 +301,7 @@ class LibraryManager:
             path = self.song_path(song)
             try:
                 if path.exists():
-                    path.unlink()
+                    move_to_trash(path)
             except OSError as exc:
                 failures.append(f"{song.title}: {exc}")
                 continue
