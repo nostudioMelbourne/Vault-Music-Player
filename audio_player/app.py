@@ -24,6 +24,7 @@ from .config import SUPPORTED_EXTENSIONS, build_paths
 from .library import LibraryManager
 from .playback import NSSoundBackend
 from .spectral import build_spectrogram
+from .song_rows import SongRowsMixin
 from .utils import describe_song, format_seconds, sanitize_name, write_json_atomic
 from .waveform import build_waveform_peaks
 
@@ -66,7 +67,7 @@ THEMES = {
 }
 
 
-class AudioPlayerApp:
+class AudioPlayerApp(SongRowsMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("Vault Music")
@@ -2122,39 +2123,6 @@ class AudioPlayerApp:
         self.refresh_playlist_list()
         self.refresh_playlist_tree()
         self.update_status_strip()
-
-    def song_tree_values(self, tree, song):
-        if tree is self.library_tree:
-            return (
-                song.title,
-                song.artist or "Unknown Artist",
-                song.album or "Singles / Unassigned",
-                self.bpm_label(song),
-                song.play_count,
-                song.filename,
-            )
-
-        if tree is self.album_song_tree:
-            return (song.title, song.artist or "Unknown Artist", self.bpm_label(song), song.play_count, song.filename)
-
-        return (
-            song.title,
-            song.artist or "Unknown Artist",
-            song.album or "Singles / Unassigned",
-            self.bpm_label(song),
-            song.play_count,
-        )
-
-    def bpm_label(self, song):
-        if song.id in self.bpm_analysis_song_ids:
-            return "Analyzing..."
-
-        return str(song.bpm) if song.bpm else ""
-
-    def update_song_tree_rows(self, song):
-        for tree in (self.library_tree, self.album_song_tree, self.playlist_tree):
-            if tree.exists(song.id):
-                tree.item(song.id, values=self.song_tree_values(tree, song))
 
     def get_selected_library_song_ids(self):
         selected_ids = set(self.library_tree.selection())
