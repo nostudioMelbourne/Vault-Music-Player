@@ -1,9 +1,86 @@
-"""Refresh library widgets while preserving the current selections."""
+"""Manage library view selections and refresh the visible widgets."""
 
 import tkinter as tk
 
 
 class LibraryViewsMixin:
+    def get_selected_library_song_ids(self):
+        selected_ids = set(self.library_tree.selection())
+        if not selected_ids:
+            return []
+
+        ordered_ids = []
+        for item_id in self.library_tree.get_children():
+            if item_id in selected_ids:
+                ordered_ids.append(item_id)
+
+        return ordered_ids
+
+    def get_primary_library_song_id(self):
+        selection = self.get_selected_library_song_ids()
+        if not selection:
+            return None
+
+        focused_id = self.library_tree.focus()
+        if focused_id in selection:
+            return focused_id
+
+        return selection[0]
+
+    def get_selected_library_songs(self):
+        return self.songs_from_ids(self.get_selected_library_song_ids())
+
+    def get_selected_album_key(self):
+        selection = self.album_tree.selection()
+        if not selection:
+            return None
+        return self.album_key_by_item.get(selection[0])
+
+    def get_selected_album_summary(self):
+        album_key = self.get_selected_album_key()
+        if album_key is None:
+            return None
+        return self.album_summary_by_key.get(album_key)
+
+    def get_selected_album_song_ids(self):
+        selected_ids = set(self.album_song_tree.selection())
+        if not selected_ids:
+            return []
+
+        ordered_ids = []
+        for item_id in self.album_song_tree.get_children():
+            if item_id in selected_ids:
+                ordered_ids.append(item_id)
+
+        return ordered_ids
+
+    def get_primary_album_song_id(self):
+        selection = self.get_selected_album_song_ids()
+        if not selection:
+            return None
+
+        focused_id = self.album_song_tree.focus()
+        if focused_id in selection:
+            return focused_id
+
+        return selection[0]
+
+    def get_selected_album_songs(self):
+        return self.songs_from_ids(self.get_selected_album_song_ids())
+
+    def get_selected_playlist_name(self):
+        selection = self.playlist_list.curselection()
+        if not selection:
+            return None
+        index = selection[0]
+        if index >= len(self.playlist_names):
+            return None
+        return self.playlist_names[index]
+
+    def get_selected_playlist_song_id(self):
+        selection = self.playlist_tree.selection()
+        return selection[0] if selection else None
+
     def refresh_all_views(self):
         self.refresh_library_tree()
         self.refresh_album_tree()
