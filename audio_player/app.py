@@ -2499,9 +2499,9 @@ class AudioPlayerApp(SongRowsMixin):
             return
 
         prompt = (
-            f"Remove '{songs[0].title}' from the library and delete the file from disk?"
+            f"Remove '{songs[0].title}' from the library and move its file to Trash? You can restore it later."
             if len(songs) == 1
-            else f"Remove {len(songs)} songs from the library and delete their files from disk?"
+            else f"Remove {len(songs)} songs from the library and move their files to Trash? You can restore them later."
         )
         if not messagebox.askyesno("Remove Song", prompt):
             return
