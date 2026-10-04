@@ -26,7 +26,7 @@ from .library_views import LibraryViewsMixin
 from .playback import NSSoundBackend
 from .spectral import build_spectrogram
 from .song_rows import SongRowsMixin
-from .utils import describe_song, format_seconds, sanitize_name
+from .utils import describe_song, format_seconds, sanitize_name, write_json_atomic
 from .waveform import build_waveform_peaks
 
 
@@ -684,8 +684,7 @@ class AudioPlayerApp(LibraryViewsMixin, SongRowsMixin):
         try:
             self.paths.app_support_dir.mkdir(parents=True, exist_ok=True)
             settings["theme"] = self.theme_mode
-            with open(self.paths.settings_db, "w", encoding="utf-8") as file:
-                json.dump(settings, file, indent=2)
+            write_json_atomic(self.paths.settings_db, settings)
         except OSError:
             pass
 
