@@ -6,7 +6,7 @@ from uuid import uuid4
 from .config import SUPPORTED_EXTENSIONS
 from .exporter import export_playlist_bundle
 from .models import AlbumSummary, Song
-from .utils import sanitize_name, unique_path
+from .utils import sanitize_name, unique_path, write_json_atomic
 
 
 class LibraryManager:
@@ -32,8 +32,7 @@ class LibraryManager:
             return default
 
     def write_json(self, path, payload):
-        with open(path, "w", encoding="utf-8") as file:
-            json.dump(payload, file, indent=2)
+        write_json_atomic(path, payload)
 
     def import_legacy_songs_if_needed(self):
         if any(self.paths.songs_dir.iterdir()):
