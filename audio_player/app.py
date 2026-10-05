@@ -27,6 +27,7 @@ from .library_views import LibraryViewsMixin
 from .playback import NSSoundBackend
 from .spectral import build_spectrogram
 from .song_rows import SongRowsMixin
+from .ui_updates import ThrottledCallback
 from .utils import describe_song, format_seconds, sanitize_name, write_json_atomic
 from .waveform import build_waveform_peaks
 
@@ -135,6 +136,7 @@ class AudioPlayerApp(KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
         self.drop_status_before_drag = None
         self.initial_pane_layout_applied = False
         self.tree_resize_job = None
+        self.analyzer_resize_redraw = ThrottledCallback(self.root, self.draw_current_analyzer)
 
         self.build_ui()
         self.configure_interactions()
@@ -250,7 +252,7 @@ class AudioPlayerApp(KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
             cursor="hand2",
         )
         self.analyzer_canvas.grid(row=0, column=0, sticky="nsew")
-        self.analyzer_canvas.bind("<Configure>", lambda _event: self.draw_spectrogram())
+        self.analyzer_canvas.bind("<Configure>", self.analyzer_resize_redraw.request)
         self.analyzer_canvas.bind("<ButtonPress-1>", self.on_progress_press)
         self.analyzer_canvas.bind("<B1-Motion>", self.on_progress_drag)
         self.analyzer_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
@@ -269,7 +271,7 @@ class AudioPlayerApp(KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
             cursor="hand2",
         )
         self.transient_canvas.grid(row=0, column=0, sticky="nsew")
-        self.transient_canvas.bind("<Configure>", lambda _event: self.draw_transient())
+        self.transient_canvas.bind("<Configure>", self.analyzer_resize_redraw.request)
         self.transient_canvas.bind("<ButtonPress-1>", self.on_progress_press)
         self.transient_canvas.bind("<B1-Motion>", self.on_progress_drag)
         self.transient_canvas.bind("<ButtonRelease-1>", self.on_progress_release)
