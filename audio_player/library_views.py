@@ -89,11 +89,21 @@ class LibraryViewsMixin:
         return selection[0] if selection else None
 
     def refresh_all_views(self):
-        self.refresh_library_tree()
-        self.refresh_album_tree()
-        self.refresh_playlist_list()
-        self.refresh_playlist_tree()
-        self.update_status_strip()
+        already_refreshing = getattr(self, "_refreshing_library_views", False)
+        self._refreshing_library_views = True
+        try:
+            self.refresh_library_tree()
+            self.refresh_album_tree()
+            self.refresh_playlist_list()
+            self.refresh_playlist_tree()
+        finally:
+            self._refreshing_library_views = already_refreshing
+
+        self._update_view_status()
+
+    def _update_view_status(self):
+        if not getattr(self, "_refreshing_library_views", False):
+            self.update_status_strip()
 
     def refresh_library_tree(self):
         selected_song_ids = self.get_selected_library_song_ids()
@@ -136,7 +146,7 @@ class LibraryViewsMixin:
         else:
             self.songs_hint_label.configure(text="Songs: double-click plays, right-click edits, drag rows into playlists.")
 
-        self.update_status_strip()
+        self._update_view_status()
 
     def refresh_album_tree(self):
         previous_key = self.get_selected_album_key()
@@ -186,7 +196,7 @@ class LibraryViewsMixin:
             else:
                 self.albums_hint_label.configure(text="Albums: play full releases, filter tracks, or drag an album into a playlist.")
 
-        self.update_status_strip()
+        self._update_view_status()
 
     def select_album_key(self, album_key):
         for item_id, key in self.album_key_by_item.items():
@@ -209,7 +219,7 @@ class LibraryViewsMixin:
         album_key = self.get_selected_album_key()
         if album_key is None:
             self.album_song_frame.configure(text="Album Songs")
-            self.update_status_strip()
+            self._update_view_status()
             return
 
         summary = self.album_summary_by_key.get(album_key)
@@ -248,7 +258,7 @@ class LibraryViewsMixin:
         elif query:
             self.albums_hint_label.configure(text=f"Album tracks: showing {len(visible_songs)} of {len(all_songs)} matches.")
 
-        self.update_status_strip()
+        self._update_view_status()
 
     def refresh_playlist_list(self):
         selected_playlist = self.get_selected_playlist_name()
@@ -271,7 +281,7 @@ class LibraryViewsMixin:
         if not self.playlist_names:
             self.playlist_list.selection_clear(0, tk.END)
             self.refresh_playlist_tree()
-            self.update_status_strip()
+            self._update_view_status()
             return
 
         if selected_playlist not in self.playlist_names:
@@ -282,7 +292,7 @@ class LibraryViewsMixin:
         self.playlist_list.selection_set(index)
         self.playlist_list.activate(index)
         self.playlist_list.see(index)
-        self.update_status_strip()
+        self._update_view_status()
 
     def refresh_playlist_tree(self):
         selected_song_id = self.get_selected_playlist_song_id()
@@ -294,7 +304,7 @@ class LibraryViewsMixin:
         playlist_name = self.get_selected_playlist_name()
         if not playlist_name:
             self.playlist_song_frame.configure(text="Playlist Songs")
-            self.update_status_strip()
+            self._update_view_status()
             return
 
         all_songs = self.library.playlist_songs(playlist_name)
@@ -326,4 +336,4 @@ class LibraryViewsMixin:
         elif query and not visible_songs:
             self.playlists_hint_label.configure(text=f"No tracks in '{playlist_name}' match '{self.playlist_song_search_var.get().strip()}'.")
 
-        self.update_status_strip()
+        self._update_view_status()
