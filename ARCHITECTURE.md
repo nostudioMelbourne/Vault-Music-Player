@@ -271,6 +271,7 @@ erDiagram
 | `audio_player.bpm` | Estimates BPM using PCM analysis and NumPy, with `afconvert` conversion for non-WAV files. |
 | `audio_player.exporter` | Copies playlist audio files and writes portable `.m3u8` playlist bundles. |
 | `audio_player.utils` | Provides sanitization, unique path generation, song labels, and time formatting. |
+| `audio_player.ui_updates` | Coalesces resize-event bursts into timed UI redraws without postponing updates until dragging stops. |
 
 ## Deployment Shape
 
