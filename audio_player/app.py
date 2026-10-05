@@ -762,9 +762,6 @@ class AudioPlayerApp(KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
         self.root.bind("<Escape>", self.clear_focused_filter, add="+")
         self.configure_file_drop_targets()
 
-    def on_filter_change(self, *_args):
-        self.refresh_all_views()
-
     def set_active_play_source(self, source):
         if self.syncing_playback_selection:
             return

@@ -1,9 +1,16 @@
-"""Manage library view selections and refresh the visible widgets."""
+"""Manage library searches, selections, and visible widget refreshes."""
 
 import tkinter as tk
 
 
 class LibraryViewsMixin:
+    def on_filter_change(self, variable_name=None, *_args):
+        if variable_name == str(self.song_search_var):
+            self.refresh_library_tree()
+            return
+
+        self.refresh_all_views()
+
     def get_selected_library_song_ids(self):
         selected_ids = set(self.library_tree.selection())
         if not selected_ids:
