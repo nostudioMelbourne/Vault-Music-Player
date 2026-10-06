@@ -13,6 +13,13 @@ class LibraryViewsMixin:
             self.refresh_album_tree()
             return
 
+        if variable_name == str(self.playlist_search_var):
+            self.refresh_playlist_list()
+            # An empty list already clears its tracks during the list refresh.
+            if self.playlist_names:
+                self.refresh_playlist_tree()
+            return
+
         self.refresh_all_views()
 
     def get_selected_library_song_ids(self):
