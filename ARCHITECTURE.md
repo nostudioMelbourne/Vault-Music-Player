@@ -261,7 +261,7 @@ erDiagram
 | --- | --- |
 | `main.py` | Starts the Tkinter application. |
 | `audio_player.app` | Owns UI state, event handling, queue behavior, playback polling, drag/drop interactions, and worker-thread result dispatch. |
-| `audio_player.library_views` | Resolves song, album, and playlist selections and refreshes their widgets while preserving visible selections. Songs search refreshes only its own rows; other filters retain full-view refreshes. Full refreshes update status and action states once, after all views are ready. |
+| `audio_player.library_views` | Resolves song, album, and playlist selections and refreshes their widgets while preserving visible selections. Songs search refreshes only its own rows; Albums search refreshes only albums and their tracks. Other filters retain full-view refreshes. Full refreshes update status and action states once, after all views are ready. |
 | `audio_player.keyboard_shortcuts` | Handles playback, removal, and search keyboard shortcuts while preserving text-field editing. |
 | `audio_player.theme` | Owns light/dark palettes, Tk/ttk widget and menu styling, and atomic theme-settings persistence. |
 | `audio_player.config` | Resolves app data paths, supported file extensions, legacy paths, and icon candidates. |
