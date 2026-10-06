@@ -270,6 +270,7 @@ erDiagram
 | `audio_player.playback` | Wraps macOS `NSSound` playback, pause/resume, stop, seek, duration, and completion detection. |
 | `audio_player.waveform` | Produces normalized waveform peaks from WAV data and converts non-WAV files with `afconvert`. |
 | `audio_player.spectral` | Produces normalized log-frequency FFT frames for the synchronized spectrum analyser. |
+| `audio_player.spectrogram_image` | Builds spectrogram RGB pixels with NumPy for in-memory Tk images, preserving nearest-neighbor scaling and frequency orientation without cache-file writes. |
 | `audio_player.bpm` | Estimates BPM using PCM analysis and NumPy, with `afconvert` conversion for non-WAV files. |
 | `audio_player.exporter` | Copies playlist audio files and writes portable `.m3u8` playlist bundles. |
 | `audio_player.utils` | Provides sanitization, unique path generation, song labels, and time formatting. |
