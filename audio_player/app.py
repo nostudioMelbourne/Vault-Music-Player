@@ -3,7 +3,6 @@ import sys
 import threading
 import time
 import tkinter as tk
-import zlib
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from urllib.parse import unquote, urlparse
@@ -25,6 +24,7 @@ from .library import LibraryManager
 from .library_views import LibraryViewsMixin
 from .playback import NSSoundBackend
 from .spectral import build_spectrogram
+from .spectrogram_image import build_spectrogram_ppm
 from .song_rows import SongRowsMixin
 from .theme import THEMES, ThemeMixin
 from .ui_updates import ThrottledCallback
@@ -62,7 +62,6 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         self.analyzer_job_token = 0
         self.spectrogram_photo = None
         self.spectrogram_photo_cache_key = None
-        self.spectrogram_photo_path = None
         self.spectrogram_error = None
         self.spectrogram_palette = self.build_spectrogram_palette()
         self.bpm_analysis_song_ids = set()
@@ -2789,7 +2788,6 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
     def invalidate_spectrogram_photo(self):
         self.spectrogram_photo = None
         self.spectrogram_photo_cache_key = None
-        self.spectrogram_photo_path = None
 
     def current_analyzer_mode(self):
         notebook = getattr(self, "analyzer_notebook", None)
@@ -2897,44 +2895,10 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         if self.spectrogram_photo is not None and self.spectrogram_photo_cache_key == cache_key:
             return self.spectrogram_photo
 
-        image_path = self.write_spectrogram_png(values, width, height)
-        self.spectrogram_photo = tk.PhotoImage(master=self.root, file=str(image_path))
+        image_data = build_spectrogram_ppm(values, self.spectrogram_palette, width, height)
+        self.spectrogram_photo = tk.PhotoImage(master=self.root, data=image_data, format="PPM")
         self.spectrogram_photo_cache_key = cache_key
-        self.spectrogram_photo_path = image_path
         return self.spectrogram_photo
-
-    def write_spectrogram_png(self, values, width, height):
-        cache_dir = self.paths.app_support_dir / "cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        song_key = self.current_song_id or "current"
-        image_path = cache_dir / f"spectrogram-{song_key}-{width}x{height}.png"
-        temporary_path = image_path.with_suffix(".tmp")
-
-        source_height, source_width = values.shape
-        raw = bytearray()
-        for y in range(height):
-            source_y = source_height - 1 - min(source_height - 1, int(y * source_height / height))
-            row = values[source_y]
-            raw.append(0)
-            for x in range(width):
-                source_x = min(source_width - 1, int(x * source_width / width))
-                raw.extend(self.spectrogram_palette[int(row[source_x])])
-
-        png = bytearray(b"\x89PNG\r\n\x1a\n")
-        png.extend(self.png_chunk(b"IHDR", width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"))
-        png.extend(self.png_chunk(b"IDAT", zlib.compress(bytes(raw), level=6)))
-        png.extend(self.png_chunk(b"IEND", b""))
-
-        with open(temporary_path, "wb") as file:
-            file.write(png)
-        temporary_path.replace(image_path)
-        return image_path
-
-    def png_chunk(self, chunk_type, data):
-        checksum = zlib.crc32(chunk_type)
-        checksum = zlib.crc32(data, checksum) & 0xFFFFFFFF
-        return len(data).to_bytes(4, "big") + chunk_type + data + checksum.to_bytes(4, "big")
 
     def draw_spectrogram_placeholder(self, canvas, left, top, width, height):
         canvas.create_rectangle(left, top, left + width, top + height, fill="#060912", outline="")
