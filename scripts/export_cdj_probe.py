@@ -19,7 +19,8 @@ def main():
     print(f"Created {len(manifest['tracks'])} synthetic tracks in {arguments.output_directory.absolute()}")
     print("Experimental Device Library proof: hardware compatibility is UNVERIFIED; OneLibrary is not included.")
     print("Copy Contents and PIONEER to the root of a spare FAT32/MBR USB with no existing Pioneer library.")
-    print("See docs/CDJ_USB_EXPORT_CONTEXT.md for the XDJ-700 checks and expected BPM values.")
+    print("Expected BPM: 120, 127.50, and 90; the 90 BPM track starts after two seconds of silence.")
+    print("On the XDJ-700, check playlist order, playback, waveforms, seeking, and quantized four-beat loops.")
 
 
 if __name__ == "__main__":

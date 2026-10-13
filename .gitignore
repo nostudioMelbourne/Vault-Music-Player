@@ -15,6 +15,7 @@ env/
 .export-test/
 songs/
 playlists/
+/docs/CDJ_USB_EXPORT_CONTEXT.md
 
 # Build and release output
 build/

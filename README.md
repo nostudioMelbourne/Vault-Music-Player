@@ -61,8 +61,11 @@ python scripts/export_cdj_probe.py /tmp/vault-cdj-probe
 
 Choose a new output folder. Existing paths are refused. This does not export your
 music or modify a USB. Hardware compatibility is unverified, and OneLibrary is
-not included yet. See [the implementation and handoff context](docs/CDJ_USB_EXPORT_CONTEXT.md)
-for the agreed plan, validation commands, and hardware acceptance checklist.
+not included yet. The tracks use 120 BPM, 127.50 BPM, and 90 BPM with two seconds
+of leading silence. For a hardware test, copy `Contents` and `PIONEER` to the root
+of a spare FAT32/MBR USB without an existing Pioneer library. On the XDJ-700,
+check playlist order, playback, BPM, overview/detail waveforms, seeking, and
+quantized four-beat loops.
 
 ## Build The macOS App
 
