@@ -2,6 +2,8 @@
 
 Vault Music is a small macOS desktop music-library app for local audio files. It imports songs, supports Finder drag-and-drop for songs and album folders, groups albums, manages playlists, shows switchable spectrogram/transient progress, estimates BPM when NumPy is available, and exports playlists as portable bundles.
 
+Supported audio files are MP3, WAV, FLAC, and AIFF (`.aif` and `.aiff`).
+
 ## Requirements
 
 - macOS
@@ -39,6 +41,14 @@ VAULT_TEST_GUI=1 python -m unittest discover -s tests -v
 ```
 
 The native checks briefly open test dialogs and exercise their themed buttons, keyboard controls, and input validation.
+
+To verify native AIFF playback on macOS, run:
+
+```sh
+VAULT_TEST_AUDIO=1 python -m unittest discover -s tests -p test_aiff.py -v
+```
+
+The playback check uses silent AIFF files and confirms that macOS playback starts and advances.
 
 ## Build The macOS App
 
