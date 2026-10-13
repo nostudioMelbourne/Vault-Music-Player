@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "AudioPlayer"
-SUPPORTED_EXTENSIONS = {".aif", ".aiff", ".flac", ".mp3", ".wav"}
+SUPPORTED_EXTENSIONS = {".aif", ".aiff", ".flac", ".m4a", ".mp3", ".wav"}
 
 
 @dataclass(frozen=True)

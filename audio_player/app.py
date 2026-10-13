@@ -1632,11 +1632,12 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         selected_paths = filedialog.askopenfilenames(
             title="Import Songs",
             filetypes=[
-                ("Audio files", "*.mp3 *.wav *.flac *.aif *.aiff"),
+                ("Audio files", "*.mp3 *.wav *.flac *.aif *.aiff *.m4a"),
                 ("MP3 files", "*.mp3"),
                 ("WAV files", "*.wav"),
                 ("FLAC files", "*.flac"),
                 ("AIFF files", "*.aif *.aiff"),
+                ("M4A files", "*.m4a"),
             ],
         )
         if not selected_paths:
