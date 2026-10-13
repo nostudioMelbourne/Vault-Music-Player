@@ -60,6 +60,50 @@ class LibraryManagerTests(unittest.TestCase):
         self.assertEqual({song.album for song in imported_songs}, {"Night Drive"})
         self.assertEqual({song.artist for song in imported_songs}, {"The Example"})
 
+    def test_aiff_import_reload_and_playlist_export_preserve_files(self):
+        source_paths = []
+        for index, suffix in enumerate((".aif", ".aiff", ".AIF", ".AIFF")):
+            source = self.root / f"Track {index}{suffix}"
+            source.write_bytes(f"AIFF audio {index}".encode("utf-8"))
+            source_paths.append(source)
+
+        self.assertEqual(self.library.import_files(source_paths), 4)
+        self.library.create_playlist("AIFF playlist")
+        self.library.add_songs_to_playlist("AIFF playlist", [song.id for song in self.library.library])
+        reloaded_library = LibraryManager(self.paths)
+        self.assertEqual(len(reloaded_library.playlist_songs("AIFF playlist")), 4)
+        export_root, playlist_file, missing_titles, copied_count = reloaded_library.export_playlist(
+            "AIFF playlist", self.root / "exports",
+        )
+
+        self.assertEqual(copied_count, 4)
+        self.assertEqual(missing_titles, [])
+        for source in source_paths:
+            exported_name = source.stem + source.suffix.lower()
+            self.assertEqual((export_root / exported_name).read_bytes(), source.read_bytes())
+            self.assertIn(exported_name, playlist_file.read_text(encoding="utf-8"))
+
+    def test_import_album_accepts_aiff_in_nested_folders(self):
+        album_dir = self.root / "aiff-album"
+        nested_dir = album_dir / "disc-two"
+        nested_dir.mkdir(parents=True)
+        (album_dir / "Intro.aif").write_bytes(b"intro")
+        (nested_dir / "Finale.AIFF").write_bytes(b"finale")
+        (album_dir / "notes.txt").write_text("not audio", encoding="utf-8")
+
+        imported_songs = self.library.import_album(album_dir, "AIFF Album", "The Example")
+
+        self.assertEqual({song.filename for song in imported_songs}, {"Intro.aif", "Finale.aiff"})
+        self.assertEqual({song.album for song in imported_songs}, {"AIFF Album"})
+        self.assertEqual({song.artist for song in imported_songs}, {"The Example"})
+
+    def test_library_discovers_aiff_copied_into_songs_folder(self):
+        (self.paths.songs_dir / "Existing.AIFF").write_bytes(b"existing audio")
+
+        reloaded_library = LibraryManager(self.paths)
+
+        self.assertEqual([song.filename for song in reloaded_library.library], ["Existing.AIFF"])
+
     def test_playlist_order_and_membership_survive_reload(self):
         songs = self._import_songs("one.mp3", "two.mp3")
         self.library.create_playlist("Road Trip")
