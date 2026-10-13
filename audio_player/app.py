@@ -898,8 +898,16 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         )
         self.playlists_hint_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
+        self.playlist_export_button = ttk.Button(
+            self.playlist_sidebar,
+            text="Export...",
+            command=self.export_playlist,
+            style="Action.TButton",
+        )
+        self.playlist_export_button.grid(row=0, column=1, sticky="e", padx=(8, 0), pady=(0, 8))
+
         self.playlist_pane = self.create_panedwindow(self.playlist_sidebar, orient=tk.VERTICAL)
-        self.playlist_pane.grid(row=1, column=0, sticky="nsew")
+        self.playlist_pane.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
         self.playlist_list_frame = ttk.LabelFrame(self.playlist_pane, text="Playlists", padding=10, style="Panel.TLabelframe")
         self.playlist_list_frame.columnconfigure(0, weight=1)
@@ -1623,6 +1631,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         self.set_widget_enabled(self.album_song_clear_button, bool(self.album_song_search_var.get()))
 
         self.set_widget_enabled(self.playlist_manage_button, has_playlist_selection)
+        self.set_widget_enabled(self.playlist_export_button, has_playlist_selection)
         self.set_widget_enabled(self.playlist_clear_button, bool(self.playlist_search_var.get()))
         self.set_widget_enabled(self.playlist_song_play_button, has_playlist_song_scope)
         self.set_widget_enabled(self.playlist_song_remove_button, has_playlist_song_selection)
