@@ -29,6 +29,17 @@ By default, user data is stored in `~/Library/Application Support/AudioPlayer`. 
 AUDIOPLAYER_DATA_DIR=.appdata python main.py
 ```
 
+## Tests
+
+Run the automated tests with `python -m unittest discover -s tests -v`.
+On macOS, include the native dialog checks with:
+
+```sh
+VAULT_TEST_GUI=1 python -m unittest discover -s tests -v
+```
+
+The native checks briefly open test dialogs and exercise their themed buttons, keyboard controls, and input validation.
+
 ## Build The macOS App
 
 ```sh

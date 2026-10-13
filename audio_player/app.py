@@ -4,7 +4,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from urllib.parse import unquote, urlparse
 
 if __package__ in (None, ""):
@@ -17,6 +17,7 @@ except ImportError:
     DND_FILES = None
     TkinterDnD = None
 
+from . import dialogs
 from .bpm import analyze_bpm
 from .config import SUPPORTED_EXTENSIONS, build_paths
 from .keyboard_shortcuts import KeyboardShortcutsMixin
@@ -1653,7 +1654,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             return
 
         default_album_name = Path(album_folder).name.strip() or "Imported Album"
-        album_name = simpledialog.askstring("Import Album", "Album name:", initialvalue=default_album_name)
+        album_name = dialogs.askstring("Import Album", "Album name:", parent=self.root, initialvalue=default_album_name)
         if album_name is None:
             return
 
@@ -1662,10 +1663,11 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             messagebox.showerror("Invalid album", "Album name cannot be empty.")
             return
 
-        artist_name = simpledialog.askstring(
+        artist_name = dialogs.askstring(
             "Import Album",
             "Artist name for the whole album:\n\nLeave blank to keep artists editable per track.",
             initialvalue="",
+            parent=self.root,
         )
         if artist_name is None:
             return
@@ -1800,12 +1802,13 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             return
 
         initial_value = songs[0].bpm or 120
-        bpm = simpledialog.askinteger(
+        bpm = dialogs.askinteger(
             "Set BPM",
             "BPM:",
             initialvalue=initial_value,
             minvalue=1,
             maxvalue=300,
+            parent=self.root,
         )
         if bpm is None:
             return
@@ -1959,7 +1962,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             self.stop_playback()
 
         if len(songs) == 1:
-            new_title = simpledialog.askstring("Rename Song", "New song title:", initialvalue=songs[0].title)
+            new_title = dialogs.askstring("Rename Song", "New song title:", parent=self.root, initialvalue=songs[0].title)
             if new_title is None:
                 return
 
@@ -1973,9 +1976,10 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             self.status_label.config(text=f"Renamed song to {renamed_song.title}")
             return
 
-        base_title = simpledialog.askstring(
+        base_title = dialogs.askstring(
             "Batch Rename",
             f"Base title for {len(songs)} songs:\n\nSongs will be renamed as 'Base Title 01', 'Base Title 02', and so on.",
+            parent=self.root,
         )
         if base_title is None:
             return
@@ -1999,7 +2003,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         existing_artists = {song.artist for song in songs}
         initial_artist = existing_artists.pop() if len(existing_artists) == 1 else ""
         prompt = "Artist name:" if len(songs) == 1 else f"Artist name for {len(songs)} selected songs:"
-        artist = simpledialog.askstring("Artist Info", prompt, initialvalue=initial_artist)
+        artist = dialogs.askstring("Artist Info", prompt, parent=self.root, initialvalue=initial_artist)
         if artist is None:
             return
 
@@ -2020,7 +2024,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         existing_albums = {song.album for song in songs}
         initial_album = existing_albums.pop() if len(existing_albums) == 1 else ""
         prompt = "Album name:" if len(songs) == 1 else f"Album name for {len(songs)} selected songs:"
-        album = simpledialog.askstring("Album Info", prompt, initialvalue=initial_album)
+        album = dialogs.askstring("Album Info", prompt, parent=self.root, initialvalue=initial_album)
         if album is None:
             return
 
@@ -2052,10 +2056,11 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         available_names = self.all_playlist_names or sorted(self.library.playlists, key=str.casefold)
         choices = "\n".join(available_names)
         initial_value = self.get_selected_playlist_name() or available_names[0]
-        response = simpledialog.askstring(
+        response = dialogs.askstring(
             "Choose Playlist",
             "Playlist name:\n\n" + choices,
             initialvalue=initial_value,
+            parent=self.root,
         )
         if response is None:
             return None
@@ -2136,7 +2141,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         self.add_song_ids_to_playlist(song_ids)
 
     def create_playlist(self):
-        name = simpledialog.askstring("New Playlist", "Playlist name:")
+        name = dialogs.askstring("New Playlist", "Playlist name:", parent=self.root)
         if name is None:
             return None
 
@@ -2158,7 +2163,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             messagebox.showinfo("Select a playlist", "Choose a playlist from the playlist sidebar first.")
             return
 
-        new_name = simpledialog.askstring("Rename Playlist", "New playlist name:", initialvalue=playlist_name)
+        new_name = dialogs.askstring("Rename Playlist", "New playlist name:", parent=self.root, initialvalue=playlist_name)
         if new_name is None:
             return
 
