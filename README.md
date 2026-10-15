@@ -50,6 +50,14 @@ VAULT_TEST_AUDIO=1 python -m unittest discover -s tests -p test_aiff.py -v
 
 The playback check uses silent AIFF files and confirms that macOS playback starts and advances.
 
+## Convert Audio
+
+Select songs, then choose **Edit > Convert Audio...**, or right-click a song in the songs, album tracks, or playlist view. Choose an output format and an existing destination folder (including a mounted USB).
+
+Conversion uses macOS `afconvert` in the background with progress and cancellation. Output formats are 16-bit/24-bit WAV or AIFF, FLAC, AAC M4A (256 kbps), and Apple Lossless M4A. The encoder retains the source sample rate when supported; unsupported inputs or encoder settings are reported per file. MP3 encoding is not offered.
+
+Originals and existing destination files are never overwritten. Completed copies are kept if you cancel; incomplete outputs are removed. Copies are not automatically imported, and library-only metadata (such as manually entered BPM) is not embedded. This is audio conversion, not a Pioneer device database or waveform export.
+
 ## Build The macOS App
 
 ```sh
