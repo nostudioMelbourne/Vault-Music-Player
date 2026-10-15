@@ -1488,10 +1488,14 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         self.refresh_playlist_tree()
         return playlist_name
 
-    def playlist_name_at_pointer(self):
-        pointer_x = self.root.winfo_pointerx()
-        pointer_y = self.root.winfo_pointery()
+    def playlist_name_at_pointer(self, pointer_x=None, pointer_y=None):
+        if pointer_x is None:
+            pointer_x = self.root.winfo_pointerx()
+        if pointer_y is None:
+            pointer_y = self.root.winfo_pointery()
         widget = self.root.winfo_containing(pointer_x, pointer_y)
+        if widget is self.playlist_tree:
+            return self.get_selected_playlist_name()
         if widget is not self.playlist_list:
             return None
 
@@ -2388,6 +2392,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             "widget": widget,
             "x_root": event.x_root,
             "y_root": event.y_root,
+            "payload": self.build_drag_payload(widget),
         }
         self.drag_payload = None
         self.drag_target_playlist = None
@@ -2404,30 +2409,31 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             if max(moved_x, moved_y) < 8:
                 return
 
-            self.drag_payload = self.build_drag_payload(self.drag_origin["widget"])
+            self.drag_payload = self.drag_origin["payload"]
             if self.drag_payload is None:
                 self.drag_origin = None
                 return
 
-        playlist_name = self.playlist_name_at_pointer()
+        playlist_name = self.playlist_name_at_pointer(event.x_root, event.y_root)
         if playlist_name == self.drag_target_playlist:
-            return
+            return "break"
 
         self.drag_target_playlist = playlist_name
         if playlist_name is None:
             self.status_label.config(text=f"Dragging {self.drag_payload['label']} to a playlist")
-            return
+            return "break"
 
         self.select_playlist_by_name(playlist_name)
         self.refresh_playlist_tree()
         self.status_label.config(text=f"Drop on '{playlist_name}' to add {self.drag_payload['label']}")
+        return "break"
 
-    def on_drag_release(self, _event):
+    def on_drag_release(self, event):
         if self.drag_origin is None:
             return
 
         payload = self.drag_payload
-        target_playlist = self.playlist_name_at_pointer() if payload else None
+        target_playlist = self.playlist_name_at_pointer(event.x_root, event.y_root) if payload else None
 
         self.drag_origin = None
         self.drag_payload = None
@@ -2441,12 +2447,12 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
                 self.select_playlist_by_name(self.playlist_before_drag)
                 self.refresh_playlist_tree()
             self.status_label.config(text=self.status_before_drag)
-            return
+            return "break"
 
         added_count = self.add_song_ids_to_playlist_named(target_playlist, payload["song_ids"])
         if not added_count:
             self.status_label.config(text=f"{payload['label'].capitalize()} already in {target_playlist}")
-            return
+            return "break"
 
         if added_count == 1 and len(payload["song_ids"]) == 1:
             song = self.library.get_song(payload["song_ids"][0])
@@ -2454,6 +2460,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             self.status_label.config(text=f"Added {title} to {target_playlist}")
         else:
             self.status_label.config(text=f"Added {added_count} songs to {target_playlist}")
+        return "break"
 
     def remove_song_from_playlist(self):
         playlist_name = self.get_selected_playlist_name()
