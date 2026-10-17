@@ -50,6 +50,23 @@ VAULT_TEST_AUDIO=1 python -m unittest discover -s tests -p test_aiff.py -v
 
 The playback check uses silent AIFF files and confirms that macOS playback starts and advances.
 
+## Experimental CDJ USB Proof
+
+A standalone developer probe generates three synthetic WAV tracks, a traditional
+Device Library, and beatgrid/waveform files for XDJ-700 testing:
+
+```sh
+python scripts/export_cdj_probe.py /tmp/vault-cdj-probe
+```
+
+Choose a new output folder. Existing paths are refused. This does not export your
+music or modify a USB. Hardware compatibility is unverified, and OneLibrary is
+not included yet. The tracks use 120 BPM, 127.50 BPM, and 90 BPM with two seconds
+of leading silence. For a hardware test, copy `Contents` and `PIONEER` to the root
+of a spare FAT32/MBR USB without an existing Pioneer library. On the XDJ-700,
+check playlist order, playback, BPM, overview/detail waveforms, seeking, and
+quantized four-beat loops.
+
 ## Build The macOS App
 
 ```sh
