@@ -20,6 +20,7 @@ except ImportError:
 from . import dialogs
 from .bpm import analyze_bpm
 from .config import SUPPORTED_EXTENSIONS, build_paths
+from .conversion_ui import AudioConversionMixin
 from .keyboard_shortcuts import KeyboardShortcutsMixin
 from .library import LibraryManager
 from .library_views import LibraryViewsMixin
@@ -33,7 +34,7 @@ from .utils import describe_song, format_seconds, sanitize_name
 from .waveform import build_waveform_peaks
 
 
-class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
+class AudioPlayerApp(AudioConversionMixin, ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, SongRowsMixin):
     def __init__(self, root):
         self.root = root
         self.root.title("Vault Music")
@@ -656,6 +657,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
                 {"label": "Rename Song(s)...", "command": self.rename_song},
                 {"label": "Edit Artist...", "command": self.edit_artist},
                 {"label": "Set Album...", "command": self.edit_album},
+                {"label": "Convert Audio...", "command": lambda: self.convert_song_ids(self.get_selected_library_song_ids())},
                 "separator",
                 {"label": "Remove Song(s)", "command": self.remove_song},
             ],
@@ -825,6 +827,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
                 {"label": "Rename Track(s)...", "command": lambda: self.rename_song(self.get_selected_album_song_ids() or self.visible_album_song_ids)},
                 {"label": "Edit Artist...", "command": lambda: self.edit_artist(self.get_selected_album_song_ids() or self.visible_album_song_ids)},
                 {"label": "Set Album...", "command": lambda: self.edit_album(self.get_selected_album_song_ids() or self.visible_album_song_ids)},
+                {"label": "Convert Audio...", "command": lambda: self.convert_song_ids(self.get_selected_album_song_ids() or self.visible_album_song_ids)},
                 "separator",
                 {"label": "Remove Track(s)", "command": lambda: self.remove_song(self.get_selected_album_song_ids() or self.visible_album_song_ids)},
             ],
@@ -2271,6 +2274,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
             menu.add_command(label="Rename Song(s)...", command=self.rename_song)
             menu.add_command(label="Edit Artist...", command=self.edit_artist)
             menu.add_command(label="Set Album...", command=self.edit_album)
+            menu.add_command(label="Convert Audio...", command=lambda: self.convert_song_ids(selected_ids))
             menu.add_separator()
             menu.add_command(label="Remove Song(s)", command=self.remove_song)
 
@@ -2315,6 +2319,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         menu.add_command(label="Rename Song(s)...", command=lambda: self.rename_song(selected_ids))
         menu.add_command(label="Edit Artist...", command=lambda: self.edit_artist(selected_ids))
         menu.add_command(label="Set Album...", command=lambda: self.edit_album(selected_ids))
+        menu.add_command(label="Convert Audio...", command=lambda: self.convert_song_ids(selected_ids))
         menu.add_separator()
         menu.add_command(label="Remove Song(s)", command=lambda: self.remove_song(selected_ids))
         self.popup_menu(menu, event)
@@ -2342,6 +2347,7 @@ class AudioPlayerApp(ThemeMixin, KeyboardShortcutsMixin, LibraryViewsMixin, Song
         menu.add_command(label="Analyze BPM", command=lambda: self.analyze_bpm_for_song_ids([item_id]))
         menu.add_command(label="Tap BPM...", command=lambda: self.open_tap_bpm_for_song_ids([item_id]))
         menu.add_command(label="Set BPM...", command=lambda: self.set_bpm_for_song_ids([item_id]))
+        menu.add_command(label="Convert Audio...", command=lambda: self.convert_song_ids([item_id]))
         menu.add_separator()
         menu.add_command(label="Remove From Playlist", command=self.remove_song_from_playlist)
         self.popup_menu(menu, event)

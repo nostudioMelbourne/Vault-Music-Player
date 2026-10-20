@@ -68,6 +68,14 @@ of a spare FAT32/MBR USB without an existing Pioneer library. On the XDJ-700,
 check playlist order, playback, BPM, overview/detail waveforms, seeking, and
 quantized four-beat loops.
 
+## Convert Audio
+
+Select songs, then choose **Edit > Convert Audio...**, or right-click a song in the songs, album tracks, or playlist view. Choose an output format and an existing destination folder (including a mounted USB).
+
+Conversion uses macOS `afconvert` in the background with progress and cancellation. Output formats are 16-bit/24-bit WAV or AIFF, FLAC, AAC M4A (256 kbps), and Apple Lossless M4A. The encoder retains the source sample rate when supported; unsupported inputs or encoder settings are reported per file. MP3 encoding is not offered.
+
+Originals and existing destination files are never overwritten. Completed copies are kept if you cancel; incomplete outputs are removed. Copies are not automatically imported, and library-only metadata (such as manually entered BPM) is not embedded. This is audio conversion, not a Pioneer device database or waveform export.
+
 ## Build The macOS App
 
 ```sh
